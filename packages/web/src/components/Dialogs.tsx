@@ -13,6 +13,20 @@ export type DialogState =
   | { kind: "delete"; target: "server"; id: string }
   | null;
 
+export interface DeletedServerSnapshot {
+  name: string;
+  command: string;
+  cwd: string;
+  port?: number;
+}
+
+/** A snapshot of what a delete-confirm just removed, enough to recreate it
+ *  verbatim for an Undo action — new ids are assigned on recreate, which is
+ *  fine, nothing meaningful survives a delete anyway. */
+export type DeletedSnapshot =
+  | { kind: "project"; name: string; servers: DeletedServerSnapshot[] }
+  | ({ kind: "server"; projectId: string } & DeletedServerSnapshot);
+
 interface Props {
   dialog: DialogState;
   onClose: () => void;
@@ -21,11 +35,14 @@ interface Props {
    *  chains into an Add Server dialog once the project shows up, carrying
    *  over any cwd/port that was already known (e.g. from a discovered item). */
   onChainToAddServer: (name: string, prefill: { cwd?: string; port?: number }) => void;
+  /** Called right before onClose after a delete-confirm actually deletes —
+   *  the caller can offer an Undo toast from the snapshot. */
+  onDeleted?: (snapshot: DeletedSnapshot) => void;
 }
 
 const DETECT_DEBOUNCE_MS = 300;
 
-export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) {
+export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted }: Props) {
   const { projects, servers, createProject, updateProject, deleteProject, createServer, updateServer, deleteServer, detectScripts, detected } =
     devhub;
 
@@ -112,8 +129,16 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) 
       if (dialog.mode === "edit") updateServer(dialog.serverId, name, command, cwd, portNum);
       else if (projectId) createServer(projectId, name, command, cwd, portNum);
     } else if (dialog.kind === "delete") {
-      if (dialog.target === "project") deleteProject(dialog.id);
-      else deleteServer(dialog.id);
+      if (dialog.target === "project") {
+        const p = projects.find((x) => x.id === dialog.id);
+        const ps = servers.filter((s) => s.projectId === dialog.id);
+        deleteProject(dialog.id);
+        if (p) onDeleted?.({ kind: "project", name: p.name, servers: ps.map((s) => ({ name: s.name, command: s.command, cwd: s.cwd, port: s.port })) });
+      } else {
+        const s = servers.find((x) => x.id === dialog.id);
+        deleteServer(dialog.id);
+        if (s) onDeleted?.({ kind: "server", projectId: s.projectId, name: s.name, command: s.command, cwd: s.cwd, port: s.port });
+      }
     }
     onClose();
   }

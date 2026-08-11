@@ -3,8 +3,8 @@ import { useDevhub } from "./hooks/useDevhub";
 import { useNow } from "./hooks/useNow";
 import { Dashboard } from "./components/Dashboard";
 import { LogDrawer } from "./components/LogDrawer";
-import { Dialogs, type DialogState } from "./components/Dialogs";
-import { Button } from "./ds";
+import { Dialogs, type DeletedServerSnapshot, type DeletedSnapshot, type DialogState } from "./components/Dialogs";
+import { Button, ToastStack, type ToastData } from "./ds";
 import { stamp } from "./lib/format";
 
 export function App() {
@@ -27,10 +27,14 @@ export function App() {
     track,
     reorderProjects,
     reorderServers,
+    createProject,
+    createServer,
   } = devhub;
   const [openServerId, setOpenServerId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [pendingProjectForServer, setPendingProjectForServer] = useState<{ name: string; cwd?: string; port?: number } | null>(null);
+  const [pendingUndo, setPendingUndo] = useState<{ name: string; servers: DeletedServerSnapshot[] } | null>(null);
+  const [toasts, setToasts] = useState<ToastData[]>([]);
   const now = useNow();
 
   useEffect(() => {
@@ -47,6 +51,42 @@ export function App() {
       setPendingProjectForServer(null);
     }
   }, [projects, pendingProjectForServer]);
+
+  // Undo-recreate for a deleted project: once the recreated project shows up
+  // in the snapshot (matched by name), recreate every server it had.
+  useEffect(() => {
+    if (!pendingUndo) return;
+    const match = projects.find((p) => p.name === pendingUndo.name);
+    if (match) {
+      for (const s of pendingUndo.servers) createServer(match.id, s.name, s.command, s.cwd, s.port);
+      setPendingUndo(null);
+    }
+  }, [projects, pendingUndo]);
+
+  function pushToast(t: Omit<ToastData, "id">) {
+    setToasts((ts) => [...ts, { ...t, id: crypto.randomUUID() }]);
+  }
+  function dismissToast(id: string) {
+    setToasts((ts) => ts.filter((t) => t.id !== id));
+  }
+  function handleDeleted(snapshot: DeletedSnapshot) {
+    if (snapshot.kind === "project") {
+      pushToast({
+        message: `Deleted "${snapshot.name}"`,
+        actionLabel: "Undo",
+        onAction: () => {
+          createProject(snapshot.name);
+          setPendingUndo({ name: snapshot.name, servers: snapshot.servers });
+        },
+      });
+    } else {
+      pushToast({
+        message: `Deleted "${snapshot.name}"`,
+        actionLabel: "Undo",
+        onAction: () => createServer(snapshot.projectId, snapshot.name, snapshot.command, snapshot.cwd, snapshot.port),
+      });
+    }
+  }
 
   const openServer = servers.find((s) => s.id === openServerId) ?? null;
   const count = (status: string) => servers.filter((s) => s.state.status === status).length;
@@ -143,7 +183,9 @@ export function App() {
         onClose={() => setDialog(null)}
         devhub={devhub}
         onChainToAddServer={(name, prefill) => setPendingProjectForServer({ name, ...prefill })}
+        onDeleted={handleDeleted}
       />
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
