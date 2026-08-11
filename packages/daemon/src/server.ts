@@ -102,12 +102,22 @@ export function createServer(pm: ProcessManager, store: ProjectStore, initialUiS
             resync();
             break;
           case "createServer":
-            store.createServer(msg.projectId, { name: msg.name, command: msg.command, cwd: msg.cwd, port: msg.port });
+            store.createServer(
+              msg.projectId,
+              msg.kind === "docker"
+                ? { kind: "docker", name: msg.name, container: msg.container, port: msg.port }
+                : { kind: "process", name: msg.name, command: msg.command, cwd: msg.cwd, port: msg.port },
+            );
             resync();
             break;
           case "updateServer": {
             const wasRunning = pm.snapshot(msg.id)?.state.status !== "stopped";
-            store.updateServer(msg.id, { name: msg.name, command: msg.command, cwd: msg.cwd, port: msg.port });
+            store.updateServer(
+              msg.id,
+              msg.kind === "docker"
+                ? { kind: "docker", name: msg.name, container: msg.container, port: msg.port }
+                : { kind: "process", name: msg.name, command: msg.command, cwd: msg.cwd, port: msg.port },
+            );
             resync();
             if (wasRunning) pm.logNote(msg.id, "[devhub] config changed — restart to apply");
             break;

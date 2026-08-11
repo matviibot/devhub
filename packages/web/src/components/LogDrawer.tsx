@@ -282,8 +282,8 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
           whiteSpace: "nowrap",
         }}
       >
-        <Icon name="folder" size={11} color="var(--color-outline)" style={{ flex: "0 0 auto" }} />
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{tildify(server.cwd)}</span>
+        <Icon name={server.kind === "docker" ? "container" : "folder"} size={11} color="var(--color-outline)" style={{ flex: "0 0 auto" }} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{server.kind === "docker" ? server.container : tildify(server.cwd)}</span>
       </div>
 
       <div
@@ -302,7 +302,9 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
           whiteSpace: "nowrap",
         }}
       >
-        <span style={{ color: "var(--color-on-surface)", overflow: "hidden", textOverflow: "ellipsis" }}>{server.command}</span>
+        <span style={{ color: "var(--color-on-surface)", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {server.kind === "docker" ? "docker container" : server.command}
+        </span>
         <span style={{ color: "var(--color-outline)", padding: "0 8px" }}>·</span>
         <span>{state.pid ? `pid ${state.pid}` : "pid —"}</span>
         <span style={{ color: "var(--color-outline)", padding: "0 8px" }}>·</span>

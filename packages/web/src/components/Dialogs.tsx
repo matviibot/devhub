@@ -1,31 +1,45 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Icon, IconButton, TextField } from "../ds";
-import type { useDevhub } from "../hooks/useDevhub";
+import type { useDevhub, ServerInput } from "../hooks/useDevhub";
 
 type Devhub = ReturnType<typeof useDevhub>;
 
 export type DialogState =
-  | { kind: "project"; mode: "add"; prefillName?: string; prefillCwd?: string; prefillPort?: number }
+  | {
+      kind: "project";
+      mode: "add";
+      prefillName?: string;
+      prefillServerKind?: "process" | "docker";
+      prefillCwd?: string;
+      prefillContainer?: string;
+      prefillPort?: number;
+    }
   | { kind: "project"; mode: "edit"; projectId: string }
-  | { kind: "server"; mode: "add"; projectId: string; prefillName?: string; prefillCwd?: string; prefillPort?: number }
+  | {
+      kind: "server";
+      mode: "add";
+      projectId: string;
+      prefillName?: string;
+      prefillServerKind?: "process" | "docker";
+      prefillCwd?: string;
+      prefillContainer?: string;
+      prefillPort?: number;
+    }
   | { kind: "server"; mode: "edit"; serverId: string }
   | { kind: "delete"; target: "project"; id: string }
   | { kind: "delete"; target: "server"; id: string }
   | null;
 
-export interface DeletedServerSnapshot {
-  name: string;
-  command: string;
-  cwd: string;
-  port?: number;
-}
+export type DeletedServerSnapshot =
+  | { kind: "process"; name: string; command: string; cwd: string; port?: number }
+  | { kind: "docker"; name: string; container: string; port?: number };
 
 /** A snapshot of what a delete-confirm just removed, enough to recreate it
  *  verbatim for an Undo action — new ids are assigned on recreate, which is
  *  fine, nothing meaningful survives a delete anyway. */
 export type DeletedSnapshot =
-  | { kind: "project"; name: string; servers: DeletedServerSnapshot[] }
-  | ({ kind: "server"; projectId: string } & DeletedServerSnapshot);
+  | { target: "project"; name: string; servers: DeletedServerSnapshot[] }
+  | ({ target: "server"; projectId: string } & DeletedServerSnapshot);
 
 interface Props {
   dialog: DialogState;
@@ -33,8 +47,8 @@ interface Props {
   devhub: Devhub;
   /** Called instead of onClose after creating a new project — the caller
    *  chains into an Add Server dialog once the project shows up, carrying
-   *  over any cwd/port that was already known (e.g. from a discovered item). */
-  onChainToAddServer: (name: string, prefill: { cwd?: string; port?: number }) => void;
+   *  over whatever was already known (e.g. from a discovered item). */
+  onChainToAddServer: (name: string, prefill: { kind?: "process" | "docker"; cwd?: string; container?: string; port?: number }) => void;
   /** Called right before onClose after a delete-confirm actually deletes —
    *  the caller can offer an Undo toast from the snapshot. */
   onDeleted?: (snapshot: DeletedSnapshot) => void;
@@ -47,8 +61,10 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
     devhub;
 
   const [name, setName] = useState("");
+  const [serverKind, setServerKind] = useState<"process" | "docker">("process");
   const [command, setCommand] = useState("");
   const [cwd, setCwd] = useState("");
+  const [container, setContainer] = useState("");
   const [port, setPort] = useState("");
   const detectTimer = useRef<ReturnType<typeof setTimeout>>();
 
@@ -71,26 +87,28 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
     } else if (dialog.kind === "server") {
       const s = dialog.mode === "edit" ? servers.find((x) => x.id === dialog.serverId) : null;
       setName(s?.name ?? (dialog.mode === "add" ? (dialog.prefillName ?? "") : ""));
-      setCommand(s?.command ?? "");
-      setCwd(s?.cwd ?? (dialog.mode === "add" ? (dialog.prefillCwd ?? "") : ""));
+      setServerKind(s?.kind ?? (dialog.mode === "add" ? (dialog.prefillServerKind ?? "process") : "process"));
+      setCommand(s?.kind === "process" ? s.command : "");
+      setCwd(s?.kind === "process" ? s.cwd : dialog.mode === "add" ? (dialog.prefillCwd ?? "") : "");
+      setContainer(s?.kind === "docker" ? s.container : dialog.mode === "add" ? (dialog.prefillContainer ?? "") : "");
       setPort(s?.port ? String(s.port) : dialog.mode === "add" && dialog.prefillPort ? String(dialog.prefillPort) : "");
     }
   }, [dialogKey]);
 
   useEffect(() => {
-    if (dialog?.kind !== "server") return;
+    if (dialog?.kind !== "server" || serverKind !== "process") return;
     clearTimeout(detectTimer.current);
     const trimmed = cwd.trim();
     if (!trimmed) return;
     detectTimer.current = setTimeout(() => detectScripts(trimmed), DETECT_DEBOUNCE_MS);
     return () => clearTimeout(detectTimer.current);
-  }, [dialog?.kind, cwd]);
+  }, [dialog?.kind, serverKind, cwd]);
 
   const scripts = useMemo(() => {
-    if (dialog?.kind !== "server" || !detected || detected.cwd !== cwd.trim()) return [];
+    if (dialog?.kind !== "server" || serverKind !== "process" || !detected || detected.cwd !== cwd.trim()) return [];
     return detected.scripts;
-  }, [dialog, detected, cwd]);
-  const noPackageJson = dialog?.kind === "server" && detected?.cwd === cwd.trim() && !detected.hasPackageJson;
+  }, [dialog, serverKind, detected, cwd]);
+  const noPackageJson = dialog?.kind === "server" && serverKind === "process" && detected?.cwd === cwd.trim() && !detected.hasPackageJson;
 
   useEffect(() => {
     if (!dialog) return;
@@ -108,7 +126,7 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dialog, name, command, cwd, port]);
+  }, [dialog, name, serverKind, command, cwd, container, port]);
 
   if (!dialog) return null;
 
@@ -120,24 +138,50 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
         updateProject(dialog.projectId, name);
       } else {
         createProject(name);
-        onChainToAddServer(name, { cwd: dialog.prefillCwd, port: dialog.prefillPort });
+        onChainToAddServer(name, {
+          kind: dialog.prefillServerKind,
+          cwd: dialog.prefillCwd,
+          container: dialog.prefillContainer,
+          port: dialog.prefillPort,
+        });
         return;
       }
     } else if (dialog.kind === "server") {
-      if (!name.trim() || !command.trim() || !cwd.trim()) return;
+      if (!name.trim()) return;
+      if (serverKind === "docker" ? !container.trim() : !command.trim() || !cwd.trim()) return;
       const portNum = port.trim() ? Number(port.trim()) : undefined;
-      if (dialog.mode === "edit") updateServer(dialog.serverId, name, command, cwd, portNum);
-      else if (projectId) createServer(projectId, name, command, cwd, portNum);
+      const input: ServerInput =
+        serverKind === "docker"
+          ? { kind: "docker", name, container: container.trim(), port: portNum }
+          : { kind: "process", name, command, cwd, port: portNum };
+      if (dialog.mode === "edit") updateServer(dialog.serverId, input);
+      else if (projectId) createServer(projectId, input);
     } else if (dialog.kind === "delete") {
       if (dialog.target === "project") {
         const p = projects.find((x) => x.id === dialog.id);
         const ps = servers.filter((s) => s.projectId === dialog.id);
         deleteProject(dialog.id);
-        if (p) onDeleted?.({ kind: "project", name: p.name, servers: ps.map((s) => ({ name: s.name, command: s.command, cwd: s.cwd, port: s.port })) });
+        if (p) {
+          onDeleted?.({
+            target: "project",
+            name: p.name,
+            servers: ps.map((s): DeletedServerSnapshot =>
+              s.kind === "docker"
+                ? { kind: "docker", name: s.name, container: s.container, port: s.port }
+                : { kind: "process", name: s.name, command: s.command, cwd: s.cwd, port: s.port },
+            ),
+          });
+        }
       } else {
         const s = servers.find((x) => x.id === dialog.id);
         deleteServer(dialog.id);
-        if (s) onDeleted?.({ kind: "server", projectId: s.projectId, name: s.name, command: s.command, cwd: s.cwd, port: s.port });
+        if (s) {
+          onDeleted?.(
+            s.kind === "docker"
+              ? { target: "server", projectId: s.projectId, kind: "docker", name: s.name, container: s.container, port: s.port }
+              : { target: "server", projectId: s.projectId, kind: "process", name: s.name, command: s.command, cwd: s.cwd, port: s.port },
+          );
+        }
       }
     }
     onClose();
@@ -172,73 +216,119 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
 
   if (dialog.kind === "server") {
     const editing = dialog.mode === "edit";
+    const disabled = !name.trim() || (serverKind === "docker" ? !container.trim() : !command.trim() || !cwd.trim());
     return (
       <Dialog
         icon={editing ? "settings-2" : "circle-plus"}
         title={`${editing ? "Edit server" : "New server"}${project ? ` · ${project.name}` : ""}`}
         width="520px"
         onClose={onClose}
-        footer={<DialogFooter onClose={onClose} onSubmit={submit} disabled={!name.trim() || !command.trim() || !cwd.trim()} label={editing ? "Save" : "Add server"} icon={editing ? "check" : "plus"} />}
+        footer={<DialogFooter onClose={onClose} onSubmit={submit} disabled={disabled} label={editing ? "Save" : "Add server"} icon={editing ? "check" : "plus"} />}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {editing ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, font: "400 11px/1 var(--font-mono)", color: "var(--color-outline)" }}>
+              <Icon name={serverKind === "docker" ? "container" : "folder"} size={12} color="var(--color-outline)" />
+              {serverKind === "docker" ? "Docker container" : "Process"}
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                gap: 4,
+                padding: 3,
+                borderRadius: "var(--radius-sm)",
+                background: "var(--color-surface-container-lowest)",
+                boxShadow: "var(--inset-hairline)",
+              }}
+            >
+              {(["process", "docker"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setServerKind(k)}
+                  style={{
+                    flex: 1,
+                    height: 26,
+                    border: "none",
+                    borderRadius: "var(--radius-xs)",
+                    background: serverKind === k ? "var(--color-surface-container-high)" : "transparent",
+                    color: serverKind === k ? "var(--color-on-surface)" : "var(--color-on-surface-variant)",
+                    font: "500 12px/1 var(--font-ui)",
+                    cursor: "pointer",
+                    WebkitAppearance: "none",
+                  }}
+                >
+                  {k === "process" ? "Process" : "Docker container"}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 96px", gap: 12 }}>
             <TextField id="dh-s-name" label="Name" value={name} onChange={setName} placeholder="web" autoFocus />
             <TextField id="dh-s-port" label="Port" value={port} onChange={(v) => setPort(v.replace(/[^0-9]/g, ""))} placeholder="optional" mono />
           </div>
 
-          <TextField id="dh-s-cwd" label="Working directory" value={cwd} onChange={setCwd} placeholder="~/code/storefront/apps/web" mono />
-          <TextField id="dh-s-cmd" label="Command" value={command} onChange={setCommand} placeholder="npm run dev" mono />
+          {serverKind === "docker" ? (
+            <TextField id="dh-s-container" label="Container" value={container} onChange={setContainer} placeholder="container name or id" mono />
+          ) : (
+            <>
+              <TextField id="dh-s-cwd" label="Working directory" value={cwd} onChange={setCwd} placeholder="~/code/storefront/apps/web" mono />
+              <TextField id="dh-s-cmd" label="Command" value={command} onChange={setCommand} placeholder="npm run dev" mono />
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              flexWrap: "wrap",
-              padding: "6px 4px 6px 8px",
-              borderRadius: "var(--radius-md)",
-              background: "var(--color-surface-container-lowest)",
-              boxShadow: "var(--inset-hairline)",
-            }}
-          >
-            <span style={{ font: "500 11px/22px var(--font-ui)", letterSpacing: "0.55px", textTransform: "uppercase", color: "var(--color-on-surface-variant)", flex: "0 0 auto" }}>
-              {scripts.length ? "detected" : "detect"}
-            </span>
-            {scripts.map((sc) => {
-              const active = sc.command === command.trim();
-              return (
-                <div
-                  key={sc.name}
-                  role="button"
-                  tabIndex={0}
-                  title={sc.command}
-                  onClick={() => setCommand(sc.command)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                    height: 22,
-                    padding: "0 7px",
-                    borderRadius: "var(--radius-sm)",
-                    boxShadow: "var(--inset-hairline)",
-                    cursor: "default",
-                    font: "400 11px/1 var(--font-mono)",
-                    color: "var(--color-primary)",
-                  }}
-                >
-                  {active && <Icon name="check" size={11} color="var(--color-primary)" />}
-                  <span>{sc.name}</span>
-                </div>
-              );
-            })}
-            {scripts.length === 0 && (
-              <span style={{ font: "400 11px/22px var(--font-mono)", color: "var(--color-outline)" }}>
-                {!cwd.trim() ? "enter a working directory to detect scripts" : noPackageJson ? `nothing to detect in ${cwd.trim()} — type the command` : "scanning…"}
-              </span>
-            )}
-            <span style={{ flex: 1 }} />
-            <IconButton icon="refresh-cw" label="Rescan directory" size="sm" onClick={() => cwd.trim() && detectScripts(cwd.trim())} />
-          </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  flexWrap: "wrap",
+                  padding: "6px 4px 6px 8px",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-surface-container-lowest)",
+                  boxShadow: "var(--inset-hairline)",
+                }}
+              >
+                <span style={{ font: "500 11px/22px var(--font-ui)", letterSpacing: "0.55px", textTransform: "uppercase", color: "var(--color-on-surface-variant)", flex: "0 0 auto" }}>
+                  {scripts.length ? "detected" : "detect"}
+                </span>
+                {scripts.map((sc) => {
+                  const active = sc.command === command.trim();
+                  return (
+                    <div
+                      key={sc.name}
+                      role="button"
+                      tabIndex={0}
+                      title={sc.command}
+                      onClick={() => setCommand(sc.command)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        height: 22,
+                        padding: "0 7px",
+                        borderRadius: "var(--radius-sm)",
+                        boxShadow: "var(--inset-hairline)",
+                        cursor: "default",
+                        font: "400 11px/1 var(--font-mono)",
+                        color: "var(--color-primary)",
+                      }}
+                    >
+                      {active && <Icon name="check" size={11} color="var(--color-primary)" />}
+                      <span>{sc.name}</span>
+                    </div>
+                  );
+                })}
+                {scripts.length === 0 && (
+                  <span style={{ font: "400 11px/22px var(--font-mono)", color: "var(--color-outline)" }}>
+                    {!cwd.trim() ? "enter a working directory to detect scripts" : noPackageJson ? `nothing to detect in ${cwd.trim()} — type the command` : "scanning…"}
+                  </span>
+                )}
+                <span style={{ flex: 1 }} />
+                <IconButton icon="refresh-cw" label="Rescan directory" size="sm" onClick={() => cwd.trim() && detectScripts(cwd.trim())} />
+              </div>
+            </>
+          )}
         </div>
       </Dialog>
     );
@@ -280,7 +370,11 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
           }}
         >
           <span style={{ color: "var(--color-on-surface)" }}>
-            {isProject ? projectServers.map((s) => s.name).join(", ") || "no servers" : targetServer?.command}
+            {isProject
+              ? projectServers.map((s) => s.name).join(", ") || "no servers"
+              : targetServer?.kind === "docker"
+                ? targetServer.container
+                : targetServer?.command}
           </span>
           <span>
             {isProject

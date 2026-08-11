@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { DiscoveredProject } from "@devhub/shared";
 import { CONFIG_PATH, loadConfig, watchConfig, writeConfig } from "./config.js";
-import { scanExternalProcesses } from "./externalScan.js";
+import { inspectDockerContainer, scanDockerContainers, scanExternalProcesses, type DockerInspectState } from "./externalScan.js";
 import { ProcessManager } from "./processManager.js";
 import { ProjectStore } from "./projectStore.js";
 import { createServer } from "./server.js";
@@ -58,20 +59,33 @@ httpServer.listen(PORT, () => {
 let scanning = false;
 let lastDiscoveredJson = "";
 setInterval(async () => {
-  if (scanning) return; // lsof can be slow with many open files; don't overlap ticks
+  if (scanning) return; // lsof/docker can be slow; don't overlap ticks
   scanning = true;
   try {
+    const flat = store.flatten();
     const candidates = pm.stoppedCandidates();
-    const configuredCwds = new Set(store.flatten().map((s) => s.cwd));
-    const { matches, discovered } = await scanExternalProcesses(candidates, configuredCwds, repoRoot);
+    const configuredCwds = new Set(flat.flatMap((s) => (s.kind === "process" ? [s.cwd] : [])));
+    const { matches, discovered: discoveredProcesses } = await scanExternalProcesses(candidates, configuredCwds, repoRoot);
     pm.setDetected(matches);
+
+    const configuredContainers = new Set(flat.flatMap((s) => (s.kind === "docker" ? [s.container] : [])));
+    const containers = await scanDockerContainers();
+    const discoveredDocker: DiscoveredProject[] = containers
+      .filter((c) => !configuredContainers.has(c.id) && !c.names.some((n) => configuredContainers.has(n)))
+      .map((c) => ({ kind: "docker" as const, container: c.names[0] ?? c.id, image: c.image, running: c.running, suggestedName: c.names[0] ?? c.id }));
+
+    const discovered = [...discoveredProcesses, ...discoveredDocker];
     const json = JSON.stringify(discovered);
     if (json !== lastDiscoveredJson) {
       lastDiscoveredJson = json;
       broadcastDiscovered(discovered);
     }
+
+    const refs = pm.dockerRefs();
+    const inspected = await Promise.all(refs.map(async (r) => [r.id, await inspectDockerContainer(r.container)] as [string, DockerInspectState | null]));
+    pm.reconcileDocker(new Map(inspected));
   } catch (err) {
-    console.error("[devhub] external-process scan failed:", (err as Error).message);
+    console.error("[devhub] external scan failed:", (err as Error).message);
   } finally {
     scanning = false;
   }
@@ -79,7 +93,7 @@ setInterval(async () => {
 
 function shutdown() {
   console.log("\n[devhub] shutting down, stopping all projects...");
-  for (const { id } of pm.allSnapshots()) pm.stop(id);
+  pm.shutdown();
   setTimeout(() => process.exit(0), 300);
 }
 process.on("SIGINT", shutdown);

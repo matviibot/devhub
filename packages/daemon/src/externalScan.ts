@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
+import type { DiscoveredDocker, DiscoveredProcess } from "@devhub/shared";
 
 const execFileAsync = promisify(execFile);
 const EXEC_OPTS = { timeout: 3000 };
@@ -16,13 +17,6 @@ export interface ListeningSocket {
 export interface ExternalMatch {
   pid: number;
   port: number;
-}
-
-export interface DiscoveredProject {
-  cwd: string;
-  port: number;
-  pid: number;
-  suggestedName: string;
 }
 
 let lsofWarned = false;
@@ -86,7 +80,7 @@ export interface ScanResult {
   /** Listeners whose cwd matches a stopped, already-configured server. */
   matches: Map<string, ExternalMatch>;
   /** Listeners under $HOME with a package.json that match no configured server at all. */
-  discovered: DiscoveredProject[];
+  discovered: DiscoveredProcess[];
 }
 
 /** One combined lsof pass: matches already-listening processes against stopped
@@ -111,7 +105,7 @@ export async function scanExternalProcesses(
 
   const home = homedir();
   const seenCwds = new Set<string>();
-  const discovered: DiscoveredProject[] = [];
+  const discovered: DiscoveredProcess[] = [];
   for (const s of sockets) {
     const cwd = cwds.get(s.pid);
     if (!cwd || seenCwds.has(cwd) || configuredCwds.has(cwd)) continue;
@@ -122,7 +116,7 @@ export async function scanExternalProcesses(
     // Misses Python/Go/Rust/etc. dev servers — worth widening later.
     if (!existsSync(join(cwd, "package.json"))) continue;
     seenCwds.add(cwd);
-    discovered.push({ cwd, port: s.port, pid: s.pid, suggestedName: basename(cwd) });
+    discovered.push({ kind: "process", cwd, port: s.port, pid: s.pid, suggestedName: basename(cwd) });
   }
 
   return { matches, discovered };
@@ -168,4 +162,76 @@ export async function processGroupId(pid: number): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+export interface DockerContainerInfo {
+  id: string;
+  names: string[];
+  image: string;
+  running: boolean;
+}
+
+export interface DockerInspectState {
+  running: boolean;
+  pid: number | null;
+  startedAt: number | null;
+  exitCode: number | null;
+}
+
+let dockerWarned = false;
+
+/** Runs a read-only docker CLI command, tolerating docker not being
+ *  installed/running — same graceful-degradation shape as runLsof, but
+ *  returns null (rather than "") on failure so callers can distinguish "no
+ *  results" from "couldn't ask", which reconcileDocker relies on to avoid
+ *  flapping a container's status on a transient docker CLI hiccup. */
+async function runDocker(args: string[]): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("docker", args, EXEC_OPTS);
+    return stdout;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (!dockerWarned) {
+      dockerWarned = true;
+      console.warn("[devhub] docker detection disabled (docker unavailable):", e.message);
+    }
+    return null;
+  }
+}
+
+/** All containers, running or not, via `docker ps -a` — stopped containers
+ *  (e.g. after `docker compose down`) are still worth surfacing so the user
+ *  can configure and later start them from devhub. */
+export async function scanDockerContainers(): Promise<DockerContainerInfo[]> {
+  const stdout = await runDocker(["ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}"]);
+  if (!stdout) return [];
+  const results: DockerContainerInfo[] = [];
+  for (const line of stdout.split("\n")) {
+    if (!line.trim()) continue;
+    const [id, names, image, state] = line.split("\t");
+    if (!id) continue;
+    results.push({ id, names: names ? names.split(",") : [], image: image ?? "", running: state === "running" });
+  }
+  return results;
+}
+
+/** A single container's live state via `docker inspect`. Deliberately one
+ *  call per container (not batched like cwdsForPids) — `docker inspect`'s
+ *  multi-ref output silently omits the line for any ref that doesn't exist,
+ *  which would break positional alignment between the refs array and the
+ *  output for every ref after the missing one. Returns null on any failure
+ *  (container removed, docker CLI unavailable) — callers should treat that
+ *  as "couldn't tell", not "not running". */
+export async function inspectDockerContainer(ref: string): Promise<DockerInspectState | null> {
+  const stdout = await runDocker(["inspect", "--format", "{{.State.Running}}\t{{.State.Pid}}\t{{.State.StartedAt}}\t{{.State.ExitCode}}", ref]);
+  if (!stdout) return null;
+  const [running, pid, startedAt, exitCode] = stdout.trim().split("\t");
+  const pidNum = Number(pid);
+  const startedMs = Date.parse(startedAt);
+  return {
+    running: running === "true",
+    pid: pidNum > 0 ? pidNum : null,
+    startedAt: Number.isFinite(startedMs) && startedMs > 0 ? startedMs : null,
+    exitCode: exitCode ? Number(exitCode) : null,
+  };
 }

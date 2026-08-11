@@ -10,9 +10,13 @@ export interface ServerCardData {
   id: string;
   name: string;
   status: ProcessStatus;
-  /** Tildified working directory — servers are grouped by project, not
-   *  co-located, so each card carries its own real location. */
+  /** Tildified working directory (process-kind) or container ref
+   *  (docker-kind) — servers are grouped by project, not co-located, so
+   *  each card carries its own real location. */
   pathLine: string;
+  /** Icon shown next to pathLine — defaults to "folder"; pass "container"
+   *  for docker-kind cards. */
+  pathIcon?: string;
   metaLine: string;
   portLabel?: string;
   url?: string;
@@ -204,7 +208,7 @@ export function ServerCard({
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 4, overflow: "hidden" }}>
-        <Icon name="folder" size={11} color="var(--color-outline)" style={{ flex: "0 0 auto" }} />
+        <Icon name={card.pathIcon ?? "folder"} size={11} color="var(--color-outline)" style={{ flex: "0 0 auto" }} />
         <span
           style={{
             font: "400 11px/16px var(--font-mono)",

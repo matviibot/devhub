@@ -13,8 +13,10 @@ export const CONFIG_PATH =
 interface RawServer {
   id?: string;
   name: string;
-  command: string;
+  kind?: "process" | "docker";
+  command?: string;
   cwd?: string;
+  container?: string;
   /** @deprecated legacy field, relative to the owning project's `root` */
   dir?: string;
   port?: number;
@@ -77,8 +79,30 @@ export function parseConfig(raw: string): ProjectConfig[] {
     seenProjectIds.add(projectId);
 
     const servers: ServerConfig[] = (p.servers ?? []).map((s) => {
-      if (!s.name || !s.command) {
-        throw new Error(`Server entry missing required field(s) (name/command) in project "${p.name}": ${JSON.stringify(s)}`);
+      if (!s.name) {
+        throw new Error(`Server entry missing required field "name" in project "${p.name}": ${JSON.stringify(s)}`);
+      }
+      const serverId = s.id ?? slugify(`${p.name}-${s.name}`);
+      if (seenServerIds.has(serverId)) {
+        throw new Error(`Duplicate server id "${serverId}" — give it an explicit unique "id" field`);
+      }
+      seenServerIds.add(serverId);
+
+      let kind = s.kind;
+      if (!kind) {
+        kind = "process";
+        migrated = true;
+      }
+
+      if (kind === "docker") {
+        if (!s.container) {
+          throw new Error(`Docker server entry missing required field "container" in project "${p.name}": ${JSON.stringify(s)}`);
+        }
+        return { id: serverId, name: s.name, kind: "docker" as const, container: s.container, port: s.port };
+      }
+
+      if (!s.command) {
+        throw new Error(`Server entry missing required field "command" in project "${p.name}": ${JSON.stringify(s)}`);
       }
       let cwd = s.cwd;
       if (!cwd && p.root) {
@@ -88,18 +112,13 @@ export function parseConfig(raw: string): ProjectConfig[] {
       if (!cwd) {
         throw new Error(`Server entry missing required field "cwd" in project "${p.name}": ${JSON.stringify(s)}`);
       }
-      const serverId = s.id ?? slugify(`${p.name}-${s.name}`);
-      if (seenServerIds.has(serverId)) {
-        throw new Error(`Duplicate server id "${serverId}" — give it an explicit unique "id" field`);
-      }
-      seenServerIds.add(serverId);
-      return { id: serverId, name: s.name, command: s.command, cwd, port: s.port };
+      return { id: serverId, name: s.name, kind: "process" as const, command: s.command, cwd, port: s.port };
     });
 
     return { id: projectId, name: p.name, servers };
   });
 
-  if (migrated) console.log("[devhub] migrated legacy project root/dir fields to per-server cwd — will be rewritten on next save");
+  if (migrated) console.log("[devhub] migrated legacy config shape (root/dir fields, kind-less servers) — will be rewritten on next save");
   return projects;
 }
 
@@ -114,7 +133,12 @@ export function writeConfig(projects: ProjectConfig[], path: string = CONFIG_PAT
     projects: projects.map((p) => ({
       id: p.id,
       name: p.name,
-      servers: p.servers.map((s) => ({ id: s.id, name: s.name, command: s.command, cwd: s.cwd, ...(s.port ? { port: s.port } : {}) })),
+      servers: p.servers.map((s) => {
+        const port = s.port ? { port: s.port } : {};
+        return s.kind === "docker"
+          ? { id: s.id, name: s.name, kind: s.kind, container: s.container, ...port }
+          : { id: s.id, name: s.name, kind: s.kind, command: s.command, cwd: s.cwd, ...port };
+      }),
     })),
   };
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");

@@ -12,6 +12,10 @@ interface Detected {
   hasPackageJson: boolean;
 }
 
+export type ServerInput =
+  | { kind: "process"; name: string; command: string; cwd: string; port?: number }
+  | { kind: "docker"; name: string; container: string; port?: number };
+
 export function useDevhub() {
   const [connected, setConnected] = useState(false);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
@@ -148,10 +152,18 @@ export function useDevhub() {
     createProject: (name: string) => send({ type: "createProject", name }),
     updateProject: (id: string, name: string) => send({ type: "updateProject", id, name }),
     deleteProject: (id: string) => send({ type: "deleteProject", id }),
-    createServer: (projectId: string, name: string, command: string, cwd: string, port?: number) =>
-      send({ type: "createServer", projectId, name, command, cwd, port }),
-    updateServer: (id: string, name: string, command: string, cwd: string, port?: number) =>
-      send({ type: "updateServer", id, name, command, cwd, port }),
+    createServer: (projectId: string, input: ServerInput) =>
+      send(
+        input.kind === "docker"
+          ? { type: "createServer", projectId, kind: "docker", name: input.name, container: input.container, port: input.port }
+          : { type: "createServer", projectId, kind: "process", name: input.name, command: input.command, cwd: input.cwd, port: input.port },
+      ),
+    updateServer: (id: string, input: ServerInput) =>
+      send(
+        input.kind === "docker"
+          ? { type: "updateServer", id, kind: "docker", name: input.name, container: input.container, port: input.port }
+          : { type: "updateServer", id, kind: "process", name: input.name, command: input.command, cwd: input.cwd, port: input.port },
+      ),
     deleteServer: (id: string) => send({ type: "deleteServer", id }),
     detectScripts: (cwd: string) => send({ type: "detectScripts", cwd }),
     track: (id: string) => send({ type: "track", id }),

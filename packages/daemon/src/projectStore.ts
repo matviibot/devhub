@@ -2,12 +2,9 @@ import type { ProjectConfig, ProjectMeta, ServerConfig } from "@devhub/shared";
 import { resolveCwd, slugify, writeConfig } from "./config.js";
 import type { RuntimeServerConfig } from "./processManager.js";
 
-interface ServerInput {
-  name: string;
-  command: string;
-  cwd: string;
-  port?: number;
-}
+type ServerInput =
+  | { kind: "process"; name: string; command: string; cwd: string; port?: number }
+  | { kind: "docker"; name: string; container: string; port?: number };
 
 /** Owns the in-memory, authoritative project/server list — CRUD mutates it,
  *  persists to devhub.config.json, and the caller re-syncs ProcessManager
@@ -34,14 +31,11 @@ export class ProjectStore {
 
   flatten(): RuntimeServerConfig[] {
     return this.projects.flatMap((p) =>
-      p.servers.map((s) => ({
-        id: s.id,
-        projectId: p.id,
-        name: s.name,
-        command: s.command,
-        cwd: resolveCwd(s.cwd),
-        port: s.port,
-      })),
+      p.servers.map((s): RuntimeServerConfig =>
+        s.kind === "docker"
+          ? { id: s.id, projectId: p.id, name: s.name, kind: "docker", container: s.container, port: s.port }
+          : { id: s.id, projectId: p.id, name: s.name, kind: "process", command: s.command, cwd: resolveCwd(s.cwd), port: s.port },
+      ),
     );
   }
 
@@ -86,17 +80,26 @@ export class ProjectStore {
     this.persist();
   }
 
+  private buildServer(id: string, input: ServerInput): ServerConfig {
+    const name = input.name.trim();
+    if (!name) throw new Error("Server name is required");
+    if (input.kind === "docker") {
+      const container = input.container.trim();
+      if (!container) throw new Error("Container is required");
+      return { id, name, kind: "docker", container, port: input.port };
+    }
+    const command = input.command.trim();
+    const cwd = input.cwd.trim();
+    if (!command) throw new Error("Command is required");
+    if (!cwd) throw new Error("Working directory is required");
+    return { id, name, kind: "process", command, cwd, port: input.port };
+  }
+
   createServer(projectId: string, input: ServerInput): ServerConfig {
     const p = this.project(projectId);
     if (!p) throw new Error("Project not found");
-    const name = input.name.trim();
-    const command = input.command.trim();
-    const cwd = input.cwd.trim();
-    if (!name) throw new Error("Server name is required");
-    if (!command) throw new Error("Command is required");
-    if (!cwd) throw new Error("Working directory is required");
-    const id = this.uniqueId(`${p.name}-${name}`, this.allServerIds());
-    const server: ServerConfig = { id, name, command, cwd, port: input.port };
+    const id = this.uniqueId(`${p.name}-${input.name.trim()}`, this.allServerIds());
+    const server = this.buildServer(id, input);
     p.servers.push(server);
     this.persist();
     return server;
@@ -104,20 +107,12 @@ export class ProjectStore {
 
   updateServer(id: string, input: ServerInput): ServerConfig {
     for (const p of this.projects) {
-      const s = p.servers.find((x) => x.id === id);
-      if (!s) continue;
-      const name = input.name.trim();
-      const command = input.command.trim();
-      const cwd = input.cwd.trim();
-      if (!name) throw new Error("Server name is required");
-      if (!command) throw new Error("Command is required");
-      if (!cwd) throw new Error("Working directory is required");
-      s.name = name;
-      s.command = command;
-      s.cwd = cwd;
-      s.port = input.port;
+      const idx = p.servers.findIndex((x) => x.id === id);
+      if (idx === -1) continue;
+      const server = this.buildServer(id, input);
+      p.servers[idx] = server;
       this.persist();
-      return s;
+      return server;
     }
     throw new Error("Server not found");
   }

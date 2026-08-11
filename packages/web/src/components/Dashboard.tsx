@@ -42,6 +42,13 @@ function reorderIds(ids: string[], draggedId: string, targetId: string): string[
   return [...rest.slice(0, targetIdx), draggedId, ...rest.slice(targetIdx)];
 }
 
+/** Discovery identity key — cwd for a host process, container ref for
+ *  docker (discoveries have no cwd). Used as the React key and for
+ *  ignore/unignore set membership. */
+function discoveryKey(d: DiscoveredProject): string {
+  return d.kind === "docker" ? d.container : d.cwd;
+}
+
 function serverCard(s: ServerSnapshot, now: number, active: boolean): ServerCardData {
   const { state } = s;
   const port = state.port ?? s.detected?.port;
@@ -51,13 +58,14 @@ function serverCard(s: ServerSnapshot, now: number, active: boolean): ServerCard
   if (s.detected) metaLine = `running externally · pid ${s.detected.pid}`;
   else if (state.status === "running" || state.status === "starting") metaLine = `pid ${state.pid ?? "—"} · up ${dur(now - (state.startedAt ?? now))}`;
   else if (state.status === "crashed") metaLine = `exited ${state.exitCode ?? "—"} · ${state.restartCount} ${plural(state.restartCount)}`;
-  else metaLine = s.command;
+  else metaLine = s.kind === "docker" ? s.container : s.command;
 
   return {
     id: s.id,
     name: s.name,
     status: state.status,
-    pathLine: tildify(s.cwd),
+    pathLine: s.kind === "docker" ? s.container : tildify(s.cwd),
+    pathIcon: s.kind === "docker" ? "container" : "folder",
     metaLine,
     portLabel: port ? `:${port}` : undefined,
     url: port ? `http://localhost:${port}` : undefined,
@@ -71,19 +79,31 @@ function serverCard(s: ServerSnapshot, now: number, active: boolean): ServerCard
 }
 
 function discoveredCard(d: DiscoveredProject, opts: { ghost?: boolean; showAddMenu?: boolean; showIgnore?: boolean; showUnignore?: boolean } = {}): ServerCardData {
-  return {
-    id: d.cwd,
+  const base = {
+    id: discoveryKey(d),
     name: d.suggestedName,
-    status: "running",
-    pathLine: tildify(d.cwd),
-    metaLine: `pid ${d.pid}`,
-    portLabel: `:${d.port}`,
-    url: `http://localhost:${d.port}`,
     ghost: opts.ghost ?? true,
     static: true,
     showAddMenu: opts.showAddMenu,
     showIgnore: opts.showIgnore,
     showUnignore: opts.showUnignore,
+  };
+  if (d.kind === "docker") {
+    return {
+      ...base,
+      status: d.running ? "running" : "stopped",
+      pathLine: d.container,
+      pathIcon: "container",
+      metaLine: d.image,
+    };
+  }
+  return {
+    ...base,
+    status: "running",
+    pathLine: tildify(d.cwd),
+    metaLine: `pid ${d.pid}`,
+    portLabel: `:${d.port}`,
+    url: `http://localhost:${d.port}`,
   };
 }
 
@@ -148,11 +168,13 @@ function matches(query: string, ...fields: (string | number | undefined | null)[
 }
 
 function serverMatches(s: ServerSnapshot, query: string): boolean {
-  return matches(query, s.name, s.command, s.cwd, s.state.port, s.detected?.port);
+  return s.kind === "docker"
+    ? matches(query, s.name, s.container, s.state.port)
+    : matches(query, s.name, s.command, s.cwd, s.state.port, s.detected?.port);
 }
 
 function discoveredMatches(d: DiscoveredProject, query: string): boolean {
-  return matches(query, d.suggestedName, d.cwd, d.port);
+  return d.kind === "docker" ? matches(query, d.suggestedName, d.container, d.image) : matches(query, d.suggestedName, d.cwd, d.port);
 }
 
 function SearchField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -265,8 +287,8 @@ export function Dashboard({
   const workspaceLabel = projects.length
     ? `${projects.length} ${projects.length === 1 ? "project" : "projects"} · ${servers.length} servers`
     : "no projects";
-  const visibleDiscovered = discovered.filter((d) => !ignored.has(d.cwd) && discoveredMatches(d, q));
-  const ignoredList = discovered.filter((d) => ignored.has(d.cwd) && discoveredMatches(d, q));
+  const visibleDiscovered = discovered.filter((d) => !ignored.has(discoveryKey(d)) && discoveredMatches(d, q));
+  const ignoredList = discovered.filter((d) => ignored.has(discoveryKey(d)) && discoveredMatches(d, q));
   const anyProjectMatches = projects.some(
     (p) => matches(q, p.name) || servers.some((s) => s.projectId === p.id && serverMatches(s, q)),
   );
@@ -363,10 +385,10 @@ export function Dashboard({
               <CardGrid>
                 {visibleDiscovered.map((d) => (
                   <ServerCard
-                    key={d.cwd}
+                    key={discoveryKey(d)}
                     card={discoveredCard(d, { showAddMenu: true, showIgnore: true })}
                     addMenuItems={addMenuItems(d, projects, onQuickAdd, onQuickAddToProject)}
-                    onIgnore={() => ignore(d.cwd)}
+                    onIgnore={() => ignore(discoveryKey(d))}
                   />
                 ))}
               </CardGrid>
@@ -388,9 +410,9 @@ export function Dashboard({
             <CardGrid style={{ marginTop: 6 }}>
               {ignoredList.map((d) => (
                 <ServerCard
-                  key={d.cwd}
+                  key={discoveryKey(d)}
                   card={discoveredCard(d, { showUnignore: true })}
-                  onUnignore={() => unignore(d.cwd)}
+                  onUnignore={() => unignore(discoveryKey(d))}
                 />
               ))}
             </CardGrid>

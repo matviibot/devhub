@@ -5,15 +5,29 @@ export type ProcessStatus = "stopped" | "starting" | "running" | "crashed";
 
 // ---- Config file schema (devhub.config.json) ----
 
-export interface ServerConfig {
+interface ServerConfigBase {
   id: string;
   name: string;
+  port?: number;
+}
+
+export interface ProcessServerConfig extends ServerConfigBase {
+  kind: "process";
   command: string;
   /** Absolute or ~-relative path to this server's own working directory —
    *  independent of its project, which is just a label to group it under. */
   cwd: string;
-  port?: number;
 }
+
+/** Devhub controls an already-existing container's lifecycle (start/stop/
+ *  restart, log streaming) — it never runs `docker create`/`docker run`. */
+export interface DockerServerConfig extends ServerConfigBase {
+  kind: "docker";
+  /** Container name or id, whatever the docker CLI accepts as a ref. */
+  container: string;
+}
+
+export type ServerConfig = ProcessServerConfig | DockerServerConfig;
 
 export interface ProjectConfig {
   id: string;
@@ -48,26 +62,52 @@ export interface DetectedExternal {
 
 /** A running process under $HOME that looks like a dev server (has a
  *  package.json) but matches no configured server at all. */
-export interface DiscoveredProject {
+export interface DiscoveredProcess {
+  kind: "process";
   cwd: string;
   port: number;
   pid: number;
   suggestedName: string;
 }
 
-export interface ServerSnapshot {
+/** A docker container (running or not) that matches no configured server's
+ *  `container` ref. */
+export interface DiscoveredDocker {
+  kind: "docker";
+  container: string;
+  image: string;
+  running: boolean;
+  suggestedName: string;
+}
+
+export type DiscoveredProject = DiscoveredProcess | DiscoveredDocker;
+
+interface ServerSnapshotBase {
   id: string;
   projectId: string;
   name: string;
-  command: string;
-  /** Resolved absolute working directory (~-expanded). */
-  cwd: string;
   port?: number;
   state: ServerState;
   /** Set when stopped and something matching this server's cwd is already
-   *  listening on a port — offer to Track it rather than starting a duplicate. */
+   *  listening on a port — offer to Track it rather than starting a duplicate.
+   *  Always null for docker-kind: attaching to a container's logs doesn't
+   *  require devhub to have spawned it, so there's nothing to "adopt". */
   detected: DetectedExternal | null;
 }
+
+export interface ProcessServerSnapshot extends ServerSnapshotBase {
+  kind: "process";
+  command: string;
+  /** Resolved absolute working directory (~-expanded). */
+  cwd: string;
+}
+
+export interface DockerServerSnapshot extends ServerSnapshotBase {
+  kind: "docker";
+  container: string;
+}
+
+export type ServerSnapshot = ProcessServerSnapshot | DockerServerSnapshot;
 
 export interface DetectedScript {
   name: string;
@@ -97,8 +137,10 @@ export type ClientMessage =
   | { type: "createProject"; name: string }
   | { type: "updateProject"; id: string; name: string }
   | { type: "deleteProject"; id: string }
-  | { type: "createServer"; projectId: string; name: string; command: string; cwd: string; port?: number }
-  | { type: "updateServer"; id: string; name: string; command: string; cwd: string; port?: number }
+  | { type: "createServer"; projectId: string; name: string; kind: "process"; command: string; cwd: string; port?: number }
+  | { type: "createServer"; projectId: string; name: string; kind: "docker"; container: string; port?: number }
+  | { type: "updateServer"; id: string; name: string; kind: "process"; command: string; cwd: string; port?: number }
+  | { type: "updateServer"; id: string; name: string; kind: "docker"; container: string; port?: number }
   | { type: "deleteServer"; id: string }
   | { type: "detectScripts"; cwd: string }
   | { type: "track"; id: string }
