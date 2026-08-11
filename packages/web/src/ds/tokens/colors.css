@@ -1,0 +1,113 @@
+/* DevHub color system — M3 role architecture, HIG adaptive semantics.
+   Dark is the default (`:root`); light resolves via prefers-color-scheme and
+   can be forced with [data-theme="light"] / [data-theme="dark"].
+   Every `--color-x` has an `--color-on-x` guaranteed to meet 4.5:1 on it. */
+:root{
+  /* palette primitives — one accent hue (azure 250) + cool neutrals */
+  --azure-95:#EAF2FF;--azure-90:#D3E3FF;--azure-80:#A8C8FF;--azure-70:#7FB2FF;--azure-60:#5A94E8;--azure-50:#3B78CC;--azure-40:#1F5AA8;--azure-30:#0F4180;--azure-20:#062A57;--azure-10:#001836;
+  --neutral-99:#FCFCFD;--neutral-98:#F8F9FA;--neutral-96:#F1F3F5;--neutral-94:#EBEDF0;--neutral-92:#E4E7EB;--neutral-87:#D7DBE0;--neutral-80:#C3C8CE;--neutral-60:#8B9299;--neutral-50:#71787F;--neutral-40:#585E65;--neutral-35:#4A5058;--neutral-30:#3C424A;--neutral-25:#33383F;--neutral-22:#2A2E34;--neutral-20:#25292E;--neutral-17:#1F2226;--neutral-15:#1B1E22;--neutral-12:#16181C;--neutral-10:#121417;--neutral-8:#0E1013;--neutral-6:#0A0C0E;--neutral-4:#07080A;
+  --green-90:#B4EFCD;--green-70:#6FD3A0;--green-50:#2E9E6B;--green-40:#188A5C;--green-35:#12734C;--green-30:#0E5C3C;--green-20:#08472C;--green-10:#00301B;
+  --amber-90:#FFE2A8;--amber-70:#F2C572;--amber-50:#C99422;--amber-35:#7A5A00;--amber-30:#65490A;--amber-20:#4A3500;--amber-10:#2E2000;
+  --red-90:#FFDAD6;--red-70:#FFB4AB;--red-50:#E5544A;--red-40:#C4372E;--red-30:#93000A;--red-20:#690005;--red-10:#410002;
+
+  /* ── M3 color roles: dark (default) ─────────────────────────────── */
+  --color-primary:var(--azure-70);--color-on-primary:var(--azure-20);
+  --color-primary-container:var(--azure-30);--color-on-primary-container:var(--azure-90);
+  --color-secondary:var(--neutral-80);--color-on-secondary:var(--neutral-20);
+  --color-secondary-container:var(--neutral-25);--color-on-secondary-container:var(--neutral-92);
+
+  --color-surface:var(--neutral-10);--color-on-surface:#E7E9EC;--color-on-surface-variant:#A3AAB2;
+  --color-surface-dim:var(--neutral-6);--color-surface-bright:var(--neutral-22);
+  --color-surface-container-lowest:var(--neutral-6);--color-surface-container-low:var(--neutral-12);--color-surface-container:var(--neutral-15);--color-surface-container-high:var(--neutral-20);--color-surface-container-highest:var(--neutral-25);
+  --color-surface-tint:var(--azure-70);
+  --color-inverse-surface:var(--neutral-92);--color-on-inverse-surface:var(--neutral-15);
+
+  --color-outline:var(--neutral-40);--color-outline-variant:var(--neutral-22);
+  --color-scrim:#000;--color-shadow:#000;
+
+  --color-success:var(--green-70);--color-on-success:var(--green-10);
+  --color-success-container:var(--green-20);--color-on-success-container:var(--green-90);
+  --color-warning:var(--amber-70);--color-on-warning:var(--amber-10);
+  --color-warning-container:var(--amber-20);--color-on-warning-container:var(--amber-90);
+  --color-error:var(--red-70);--color-on-error:var(--red-20);
+  --color-error-container:var(--red-30);--color-on-error-container:var(--red-90);
+  --color-neutral-status:var(--neutral-60);--color-on-neutral-status:var(--neutral-10);
+  --color-neutral-status-container:var(--neutral-22);--color-on-neutral-status-container:var(--neutral-87);
+
+  /* HIG materials — layered translucency instead of hard borders */
+  --material-thin:rgba(30,34,39,.62);--material-regular:rgba(22,25,29,.76);--material-thick:rgba(14,16,19,.9);
+  --material-blur:20px;--material-blur-thick:36px;
+  --material-hairline:rgba(255,255,255,.07);
+  --state-hover:rgba(255,255,255,.055);--state-press:rgba(255,255,255,.10);--state-selected:rgba(127,178,255,.14);--state-focus-ring:rgba(127,178,255,.55);
+  --scrim-alpha:.55;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme:light){:root{color-scheme:light;
+  --color-primary:var(--azure-40);--color-on-primary:#FFFFFF;
+  --color-primary-container:var(--azure-90);--color-on-primary-container:var(--azure-10);
+  --color-secondary:var(--neutral-40);--color-on-secondary:#FFFFFF;
+  --color-secondary-container:var(--neutral-92);--color-on-secondary-container:var(--neutral-20);
+
+  --color-surface:var(--neutral-99);--color-on-surface:#1A1C1F;--color-on-surface-variant:#5B6169;
+  --color-surface-dim:var(--neutral-92);--color-surface-bright:#FFFFFF;
+  --color-surface-container-lowest:#FFFFFF;--color-surface-container-low:var(--neutral-98);--color-surface-container:var(--neutral-96);--color-surface-container-high:var(--neutral-94);--color-surface-container-highest:var(--neutral-92);
+  --color-surface-tint:var(--azure-40);
+  --color-inverse-surface:var(--neutral-17);--color-on-inverse-surface:var(--neutral-94);
+
+  --color-outline:var(--neutral-60);--color-outline-variant:var(--neutral-87);
+
+  --color-success:#177A50;--color-on-success:#FFFFFF;
+  --color-success-container:#CFF0DE;--color-on-success-container:var(--green-10);
+  --color-warning:#8A6300;--color-on-warning:#FFFFFF;
+  --color-warning-container:var(--amber-90);--color-on-warning-container:var(--amber-10);
+  --color-error:#B3261E;--color-on-error:#FFFFFF;
+  --color-error-container:var(--red-90);--color-on-error-container:var(--red-20);
+  --color-neutral-status:var(--neutral-50);--color-on-neutral-status:#FFFFFF;
+  --color-neutral-status-container:var(--neutral-92);--color-on-neutral-status-container:var(--neutral-30);
+
+  --material-thin:rgba(255,255,255,.66);--material-regular:rgba(250,250,252,.8);--material-thick:rgba(246,247,249,.93);
+  --material-hairline:rgba(0,0,0,.08);
+  --state-hover:rgba(0,0,0,.04);--state-press:rgba(0,0,0,.08);--state-selected:rgba(31,90,168,.10);--state-focus-ring:rgba(31,90,168,.5);
+  --scrim-alpha:.3;
+}}
+[data-theme="light"]{color-scheme:light;
+  --color-primary:var(--azure-40);--color-on-primary:#FFFFFF;--color-primary-container:var(--azure-90);--color-on-primary-container:var(--azure-10);
+  --color-secondary:var(--neutral-40);--color-on-secondary:#FFFFFF;--color-secondary-container:var(--neutral-92);--color-on-secondary-container:var(--neutral-20);
+  --color-surface:var(--neutral-99);--color-on-surface:#1A1C1F;--color-on-surface-variant:#5B6169;
+  --color-surface-dim:var(--neutral-92);--color-surface-bright:#FFFFFF;
+  --color-surface-container-lowest:#FFFFFF;--color-surface-container-low:var(--neutral-98);--color-surface-container:var(--neutral-96);--color-surface-container-high:var(--neutral-94);--color-surface-container-highest:var(--neutral-92);
+  --color-surface-tint:var(--azure-40);--color-inverse-surface:var(--neutral-17);--color-on-inverse-surface:var(--neutral-94);
+  --color-outline:var(--neutral-60);--color-outline-variant:var(--neutral-87);
+  --color-success:#177A50;--color-on-success:#FFFFFF;--color-success-container:#CFF0DE;--color-on-success-container:var(--green-10);
+  --color-warning:#8A6300;--color-on-warning:#FFFFFF;--color-warning-container:var(--amber-90);--color-on-warning-container:var(--amber-10);
+  --color-error:#B3261E;--color-on-error:#FFFFFF;--color-error-container:var(--red-90);--color-on-error-container:var(--red-20);
+  --color-neutral-status:var(--neutral-50);--color-on-neutral-status:#FFFFFF;--color-neutral-status-container:var(--neutral-92);--color-on-neutral-status-container:var(--neutral-30);
+  --material-thin:rgba(255,255,255,.66);--material-regular:rgba(250,250,252,.8);--material-thick:rgba(246,247,249,.93);
+  --material-hairline:rgba(0,0,0,.08);
+  --state-hover:rgba(0,0,0,.04);--state-press:rgba(0,0,0,.08);--state-selected:rgba(31,90,168,.10);--state-focus-ring:rgba(31,90,168,.5);
+  --scrim-alpha:.3;
+}
+[data-theme="dark"]{color-scheme:dark;
+  --color-primary:var(--azure-70);--color-on-primary:var(--azure-20);--color-primary-container:var(--azure-30);--color-on-primary-container:var(--azure-90);
+  --color-secondary:var(--neutral-80);--color-on-secondary:var(--neutral-20);--color-secondary-container:var(--neutral-25);--color-on-secondary-container:var(--neutral-92);
+  --color-surface:var(--neutral-10);--color-on-surface:#E7E9EC;--color-on-surface-variant:#A3AAB2;
+  --color-surface-dim:var(--neutral-6);--color-surface-bright:var(--neutral-22);
+  --color-surface-container-lowest:var(--neutral-6);--color-surface-container-low:var(--neutral-12);--color-surface-container:var(--neutral-15);--color-surface-container-high:var(--neutral-20);--color-surface-container-highest:var(--neutral-25);
+  --color-surface-tint:var(--azure-70);--color-inverse-surface:var(--neutral-92);--color-on-inverse-surface:var(--neutral-15);
+  --color-outline:var(--neutral-40);--color-outline-variant:var(--neutral-22);
+  --color-success:var(--green-70);--color-on-success:var(--green-10);--color-success-container:var(--green-20);--color-on-success-container:var(--green-90);
+  --color-warning:var(--amber-70);--color-on-warning:var(--amber-10);--color-warning-container:var(--amber-20);--color-on-warning-container:var(--amber-90);
+  --color-error:var(--red-70);--color-on-error:var(--red-20);--color-error-container:var(--red-30);--color-on-error-container:var(--red-90);
+  --color-neutral-status:var(--neutral-60);--color-on-neutral-status:var(--neutral-10);--color-neutral-status-container:var(--neutral-22);--color-on-neutral-status-container:var(--neutral-87);
+  --material-thin:rgba(30,34,39,.62);--material-regular:rgba(22,25,29,.76);--material-thick:rgba(14,16,19,.9);
+  --material-hairline:rgba(255,255,255,.07);
+  --state-hover:rgba(255,255,255,.055);--state-press:rgba(255,255,255,.10);--state-selected:rgba(127,178,255,.14);--state-focus-ring:rgba(127,178,255,.55);
+  --scrim-alpha:.55;
+}
+/* semantic status aliases — process lifecycle maps onto the roles */
+:root{--status-running:var(--color-success);--status-running-container:var(--color-success-container);--status-on-running-container:var(--color-on-success-container);
+--status-starting:var(--color-warning);--status-starting-container:var(--color-warning-container);--status-on-starting-container:var(--color-on-warning-container);
+--status-crashed:var(--color-error);--status-crashed-container:var(--color-error-container);--status-on-crashed-container:var(--color-on-error-container);
+--status-stopped:var(--color-neutral-status);--status-stopped-container:var(--color-neutral-status-container);--status-on-stopped-container:var(--color-on-neutral-status-container);
+--text-primary:var(--color-on-surface);--text-secondary:var(--color-on-surface-variant);--text-tertiary:var(--color-outline);--text-accent:var(--color-primary);
+--link-color:var(--color-primary);--link-hover:var(--azure-80)}

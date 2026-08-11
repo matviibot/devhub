@@ -13,6 +13,26 @@ const PORT_RE = /(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d{2,5})\b/;
 // e.g. "localhost:\x1b[1m1420\x1b[22m" — strip those before matching, or
 // the escape sequence breaks the ":digits" adjacency PORT_RE relies on.
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
+// Strip ALL escape sequences (not just SGR color codes) to detect lines that
+// are visually blank — spinners/progress bars often clear-and-redraw using
+// cursor-position/erase codes (e.g. "\x1b[1G\x1b[0K"), which split() turns
+// into dozens of "blank" lines that a real terminal would have erased.
+const ANY_ESCAPE_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+const isVisuallyBlank = (line: string) => line.replace(ANY_ESCAPE_RE, "").trim() === "";
+
+/** Collapses runs of visually-blank lines to at most one, preserving
+ *  intentional single-blank-line spacing while dropping spinner noise. */
+function collapseBlankRuns(newLines: string[], lastStored: string | undefined): string[] {
+  const out: string[] = [];
+  let prevBlank = lastStored !== undefined && isVisuallyBlank(lastStored);
+  for (const line of newLines) {
+    const blank = isVisuallyBlank(line);
+    if (blank && prevBlank) continue;
+    out.push(line);
+    prevBlank = blank;
+  }
+  return out;
+}
 
 interface Runtime {
   config: ProjectConfig;
@@ -48,6 +68,7 @@ export class ProcessManager extends EventEmitter {
         pid: null,
         startedAt: null,
         exitCode: null,
+        restartCount: 0,
       },
       logs: [],
       lineBuffer: "",
@@ -146,6 +167,7 @@ export class ProcessManager extends EventEmitter {
   restart(id: string) {
     const rt = this.runtimes.get(id);
     if (!rt) return;
+    rt.state.restartCount += 1;
     if (!rt.pty) {
       this.start(id);
       return;
@@ -192,9 +214,11 @@ export class ProcessManager extends EventEmitter {
     }
 
     if (parts.length === 0) return;
-    rt.logs.push(...parts);
+    const collapsed = collapseBlankRuns(parts, rt.logs[rt.logs.length - 1]);
+    if (collapsed.length === 0) return;
+    rt.logs.push(...collapsed);
     if (rt.logs.length > LOG_BUFFER_LINES) rt.logs.splice(0, rt.logs.length - LOG_BUFFER_LINES);
-    this.emit("log", id, parts);
+    this.emit("log", id, collapsed);
   }
 
   private handleExit(id: string, exitCode: number) {

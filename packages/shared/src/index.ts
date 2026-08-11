@@ -19,6 +19,7 @@ export interface ProjectState {
   pid: number | null;
   startedAt: number | null;
   exitCode: number | null;
+  restartCount: number;
 }
 
 export interface ProjectSnapshot extends ProjectConfig {

@@ -1,0 +1,27 @@
+/* M3 type scale, rendered at HIG-ish restraint: tight tracking on large sizes,
+   no all-caps except label-small, weights stay 400–600. */
+:root{
+  --text-display-large-size:57px;--text-display-large-line:64px;--text-display-large-weight:600;--text-display-large-track:-1.5px;
+  --text-display-medium-size:45px;--text-display-medium-line:52px;--text-display-medium-weight:600;--text-display-medium-track:-1px;
+  --text-display-small-size:36px;--text-display-small-line:44px;--text-display-small-weight:600;--text-display-small-track:-.6px;
+
+  --text-headline-large-size:32px;--text-headline-large-line:40px;--text-headline-large-weight:600;--text-headline-large-track:-.5px;
+  --text-headline-medium-size:28px;--text-headline-medium-line:36px;--text-headline-medium-weight:600;--text-headline-medium-track:-.4px;
+  --text-headline-small-size:24px;--text-headline-small-line:32px;--text-headline-small-weight:600;--text-headline-small-track:-.3px;
+
+  --text-title-large-size:20px;--text-title-large-line:28px;--text-title-large-weight:600;--text-title-large-track:-.2px;
+  --text-title-medium-size:16px;--text-title-medium-line:22px;--text-title-medium-weight:600;--text-title-medium-track:-.1px;
+  --text-title-small-size:14px;--text-title-small-line:20px;--text-title-small-weight:600;--text-title-small-track:0px;
+
+  --text-body-large-size:16px;--text-body-large-line:24px;--text-body-large-weight:400;--text-body-large-track:0px;
+  --text-body-medium-size:14px;--text-body-medium-line:20px;--text-body-medium-weight:400;--text-body-medium-track:0px;
+  --text-body-small-size:12px;--text-body-small-line:17px;--text-body-small-weight:400;--text-body-small-track:.1px;
+
+  --text-label-large-size:14px;--text-label-large-line:18px;--text-label-large-weight:600;--text-label-large-track:0px;
+  --text-label-medium-size:12px;--text-label-medium-line:16px;--text-label-medium-weight:600;--text-label-medium-track:.2px;
+  --text-label-small-size:11px;--text-label-small-line:14px;--text-label-small-weight:600;--text-label-small-track:.55px;
+
+  --text-mono-large-size:13px;--text-mono-large-line:20px;
+  --text-mono-medium-size:12px;--text-mono-medium-line:18px;
+  --text-mono-small-size:11px;--text-mono-small-line:16px;
+}

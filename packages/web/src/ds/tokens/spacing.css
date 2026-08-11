@@ -1,0 +1,10 @@
+/* 4pt base grid; density tokens for the compact desktop chrome HIG favors. */
+:root{
+  --space-0:0px;--space-1:2px;--space-2:4px;--space-3:6px;--space-4:8px;--space-5:12px;--space-6:16px;--space-7:20px;--space-8:24px;--space-9:32px;--space-10:40px;--space-11:48px;--space-12:64px;--space-13:80px;
+  --radius-xs:3px;--radius-sm:5px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-2xl:22px;--radius-full:999px;
+  --row-height-compact:26px;--row-height:30px;--row-height-comfy:36px;
+  --control-height-sm:24px;--control-height:30px;--control-height-lg:36px;
+  --sidebar-width:264px;--sidebar-width-min:200px;--inspector-width:320px;--toolbar-height:44px;--tabbar-height:36px;
+  --gutter:16px;--gutter-lg:24px;--content-max:720px;
+  --hairline:1px;
+}
