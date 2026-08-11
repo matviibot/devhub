@@ -1,5 +1,5 @@
 import { useState, type CSSProperties, type ReactNode } from "react";
-import type { DiscoveredProject, ProjectMeta, ServerSnapshot } from "@devhub/shared";
+import type { DiscoveredProject, ProjectMeta, ServerSnapshot, UiState } from "@devhub/shared";
 import { Button, EmptyState, GroupHeader, Icon, IconButton, ServerCard, type MenuButtonItem, type ServerCardData } from "../ds";
 import { dur } from "../lib/format";
 import { tildify } from "../lib/paths";
@@ -10,6 +10,8 @@ interface Props {
   discovered: DiscoveredProject[];
   openServerId: string | null;
   now: number;
+  uiState: UiState;
+  onSetUiState: (state: UiState) => void;
   onOpen: (id: string) => void;
   onStart: (id: string) => void;
   onStop: (id: string) => void;
@@ -135,6 +137,8 @@ export function Dashboard({
   discovered,
   openServerId,
   now,
+  uiState,
+  onSetUiState,
   onOpen,
   onStart,
   onStop,
@@ -151,17 +155,17 @@ export function Dashboard({
   onQuickAdd,
   onQuickAddToProject,
 }: Props) {
-  const [ignored, setIgnored] = useState<Set<string>>(new Set());
-  // "ignored" starts pre-collapsed — it's a rarely-visited bin, not something
-  // that should compete for attention with active projects on every load.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(["section:ignored"]));
-  const toggle = (key: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  const ignored = new Set(uiState.ignoredDiscovered);
+  const collapsed = new Set(uiState.collapsedGroups);
+
+  const toggle = (key: string) => {
+    const next = new Set(collapsed);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    onSetUiState({ ...uiState, collapsedGroups: [...next] });
+  };
+  const ignore = (key: string) => onSetUiState({ ...uiState, ignoredDiscovered: [...new Set(uiState.ignoredDiscovered).add(key)] });
+  const unignore = (key: string) => onSetUiState({ ...uiState, ignoredDiscovered: uiState.ignoredDiscovered.filter((k) => k !== key) });
 
   const workspaceLabel = projects.length
     ? `${projects.length} ${projects.length === 1 ? "project" : "projects"} · ${servers.length} servers`
@@ -257,7 +261,7 @@ export function Dashboard({
                     key={d.cwd}
                     card={discoveredCard(d, { showAddMenu: true, showIgnore: true })}
                     addMenuItems={addMenuItems(d, projects, onQuickAdd, onQuickAddToProject)}
-                    onIgnore={() => setIgnored((prev) => new Set(prev).add(d.cwd))}
+                    onIgnore={() => ignore(d.cwd)}
                   />
                 ))}
               </CardGrid>
@@ -281,13 +285,7 @@ export function Dashboard({
                 <ServerCard
                   key={d.cwd}
                   card={discoveredCard(d, { showUnignore: true })}
-                  onUnignore={() =>
-                    setIgnored((prev) => {
-                      const next = new Set(prev);
-                      next.delete(d.cwd);
-                      return next;
-                    })
-                  }
+                  onUnignore={() => unignore(d.cwd)}
                 />
               ))}
             </CardGrid>

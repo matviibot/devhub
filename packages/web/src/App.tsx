@@ -9,7 +9,7 @@ import { stamp } from "./lib/format";
 
 export function App() {
   const devhub = useDevhub();
-  const { connected, projects, servers, discovered, error, clearError, addLogListener, start, stop, restart, startProject, stopProject, track } =
+  const { connected, projects, servers, discovered, uiState, setUiState, error, clearError, addLogListener, start, stop, restart, startProject, stopProject, track } =
     devhub;
   const [openServerId, setOpenServerId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -94,6 +94,8 @@ export function App() {
           discovered={discovered}
           openServerId={openServerId}
           now={now}
+          uiState={uiState}
+          onSetUiState={setUiState}
           onOpen={setOpenServerId}
           onStart={start}
           onStop={stop}

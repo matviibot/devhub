@@ -6,6 +6,7 @@ import { scanExternalProcesses } from "./externalScan.js";
 import { ProcessManager } from "./processManager.js";
 import { ProjectStore } from "./projectStore.js";
 import { createServer } from "./server.js";
+import { loadUiState } from "./uiState.js";
 
 const DETECT_INTERVAL_MS = 5000;
 
@@ -37,7 +38,7 @@ try {
 const store = new ProjectStore(projects);
 const pm = new ProcessManager(store.flatten());
 
-const { httpServer, broadcastSnapshot, broadcastDiscovered } = createServer(pm, store, webDistPath);
+const { httpServer, broadcastSnapshot, broadcastDiscovered } = createServer(pm, store, loadUiState(), webDistPath);
 
 watchConfig(
   CONFIG_PATH,

@@ -1,11 +1,12 @@
 import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import type { ClientMessage, DiscoveredProject, ServerMessage } from "@devhub/shared";
+import type { ClientMessage, DiscoveredProject, ServerMessage, UiState } from "@devhub/shared";
 import { detectScripts, resolveCwd } from "./config.js";
 import type { ProcessManager } from "./processManager.js";
 import type { ProjectStore } from "./projectStore.js";
 import { serveStatic } from "./staticServer.js";
+import { writeUiState } from "./uiState.js";
 
 interface ClientConn {
   ws: WebSocket;
@@ -16,13 +17,14 @@ function send(ws: WebSocket, msg: ServerMessage) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
-export function createServer(pm: ProcessManager, store: ProjectStore, webDistPath: string) {
+export function createServer(pm: ProcessManager, store: ProjectStore, initialUiState: UiState, webDistPath: string) {
   const httpServer = createHttpServer((req, res) => serveStatic(webDistPath, req, res));
   const wss = new WebSocketServer({ noServer: true });
   const clients = new Set<ClientConn>();
+  let uiState = initialUiState;
 
   function snapshotMsg(): ServerMessage {
-    return { type: "snapshot", projects: store.metas(), servers: pm.allSnapshots() };
+    return { type: "snapshot", projects: store.metas(), servers: pm.allSnapshots(), uiState };
   }
 
   function broadcastSnapshot() {
@@ -123,6 +125,11 @@ export function createServer(pm: ProcessManager, store: ProjectStore, webDistPat
           }
           case "track":
             pm.track(msg.id).catch((err) => send(ws, { type: "commandError", message: (err as Error).message }));
+            break;
+          case "setUiState":
+            uiState = msg.state;
+            writeUiState(uiState);
+            for (const c of clients) send(c.ws, { type: "uiState", state: uiState });
             break;
         }
       } catch (err) {

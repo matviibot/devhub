@@ -74,6 +74,16 @@ export interface DetectedScript {
   command: string;
 }
 
+/** UI-only preferences (which discovered items are dismissed, which groups
+ *  are collapsed) — persisted daemon-side, separate from devhub.config.json,
+ *  so they survive across browsers/devices hitting the same daemon. */
+export interface UiState {
+  /** Discovery identity keys (cwd for a process, container name for docker). */
+  ignoredDiscovered: string[];
+  /** Group keys: "project:<id>" | "section:discovered" | "section:ignored". */
+  collapsedGroups: string[];
+}
+
 // ---- Client -> Daemon ----
 
 export type ClientMessage =
@@ -91,16 +101,18 @@ export type ClientMessage =
   | { type: "updateServer"; id: string; name: string; command: string; cwd: string; port?: number }
   | { type: "deleteServer"; id: string }
   | { type: "detectScripts"; cwd: string }
-  | { type: "track"; id: string };
+  | { type: "track"; id: string }
+  | { type: "setUiState"; state: UiState };
 
 // ---- Daemon -> Client ----
 
 export type ServerMessage =
-  | { type: "snapshot"; projects: ProjectMeta[]; servers: ServerSnapshot[] }
+  | { type: "snapshot"; projects: ProjectMeta[]; servers: ServerSnapshot[]; uiState: UiState }
   | { type: "serverUpdated"; server: ServerSnapshot }
   | { type: "serverRemoved"; id: string }
   | { type: "log"; id: string; lines: string[] }
   | { type: "logBacklog"; id: string; lines: string[] }
   | { type: "scriptsDetected"; cwd: string; scripts: DetectedScript[]; hasPackageJson: boolean }
   | { type: "discovered"; items: DiscoveredProject[] }
+  | { type: "uiState"; state: UiState }
   | { type: "commandError"; message: string };
