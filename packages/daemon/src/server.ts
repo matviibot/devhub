@@ -131,6 +131,14 @@ export function createServer(pm: ProcessManager, store: ProjectStore, initialUiS
             writeUiState(uiState);
             for (const c of clients) send(c.ws, { type: "uiState", state: uiState });
             break;
+          case "reorderProjects":
+            store.reorderProjects(msg.ids);
+            resync();
+            break;
+          case "reorderServers":
+            store.reorderServers(msg.projectId, msg.ids);
+            resync();
+            break;
         }
       } catch (err) {
         send(ws, { type: "commandError", message: (err as Error).message });

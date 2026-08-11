@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from "react";
+import { useState, type DragEvent, type MouseEvent } from "react";
 import type { ProcessStatus } from "@devhub/shared";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
@@ -47,11 +47,35 @@ interface Props {
   onTrack?: () => void;
   onIgnore?: () => void;
   onUnignore?: () => void;
+  /** Presence makes the card draggable (a grip handle appears on hover). */
+  onDragStart?: (e: DragEvent<HTMLDivElement>) => void;
+  onDragOver?: (e: DragEvent<HTMLDivElement>) => void;
+  onDrop?: (e: DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: () => void;
+  dragging?: boolean;
 }
 
 /** Dashboard grid tile for a single server — status, meta, and its controls. */
-export function ServerCard({ card, addMenuItems, onOpen, onEdit, onDelete, onStart, onStop, onRestart, onTrack, onIgnore, onUnignore }: Props) {
+export function ServerCard({
+  card,
+  addMenuItems,
+  onOpen,
+  onEdit,
+  onDelete,
+  onStart,
+  onStop,
+  onRestart,
+  onTrack,
+  onIgnore,
+  onUnignore,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  dragging = false,
+}: Props) {
   const [hover, setHover] = useState(false);
+  const draggable = !!onDragStart;
   const [nameHover, setNameHover] = useState(false);
   const ghost = !!card.ghost;
   const showLogs = !card.static;
@@ -68,6 +92,11 @@ export function ServerCard({ card, addMenuItems, onOpen, onEdit, onDelete, onSta
     <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -87,9 +116,18 @@ export function ServerCard({ card, addMenuItems, onOpen, onEdit, onDelete, onSta
         border: ghost ? "1px dashed var(--color-outline-variant)" : "1px solid transparent",
         transition: "var(--transition-state)",
         fontFamily: "var(--font-ui)",
+        opacity: dragging ? 0.4 : 1,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, height: 20 }}>
+        {draggable && (
+          <Icon
+            name="grip-vertical"
+            size={12}
+            color="var(--color-outline)"
+            style={{ flex: "0 0 auto", opacity: hover ? 1 : 0, transition: "opacity var(--duration-fast) var(--ease-standard)", cursor: "grab" }}
+          />
+        )}
         <StatusDot status={card.status} size={9} ring />
 
         {card.static ? (

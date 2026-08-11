@@ -9,8 +9,25 @@ import { stamp } from "./lib/format";
 
 export function App() {
   const devhub = useDevhub();
-  const { connected, projects, servers, discovered, uiState, setUiState, error, clearError, addLogListener, start, stop, restart, startProject, stopProject, track } =
-    devhub;
+  const {
+    connected,
+    projects,
+    servers,
+    discovered,
+    uiState,
+    setUiState,
+    error,
+    clearError,
+    addLogListener,
+    start,
+    stop,
+    restart,
+    startProject,
+    stopProject,
+    track,
+    reorderProjects,
+    reorderServers,
+  } = devhub;
   const [openServerId, setOpenServerId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [pendingProjectForServer, setPendingProjectForServer] = useState<{ name: string; cwd?: string; port?: number } | null>(null);
@@ -113,6 +130,8 @@ export function App() {
           onQuickAddToProject={(item, projectId) =>
             setDialog({ kind: "server", mode: "add", projectId, prefillName: item.suggestedName, prefillCwd: item.cwd, prefillPort: item.port })
           }
+          onReorderProjects={reorderProjects}
+          onReorderServers={reorderServers}
         />
         {openServer && (
           <LogDrawer server={openServer} addLogListener={addLogListener} onClose={() => setOpenServerId(null)} onStop={stop} onRestart={restart} now={now} />

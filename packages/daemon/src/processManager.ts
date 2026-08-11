@@ -137,16 +137,23 @@ export class ProcessManager extends EventEmitter {
       }
     }
 
+    // Rebuild the map in `servers`' order rather than mutating in place —
+    // Map.set on an existing key doesn't move its iteration position, so a
+    // reorder-only config change would otherwise never show up in
+    // allSnapshots()'s output order.
+    const next = new Map<string, Runtime>();
     for (const config of servers) {
       const existing = this.runtimes.get(config.id);
-      if (!existing) {
-        this.runtimes.set(config.id, this.freshRuntime(config));
-      } else {
+      if (existing) {
         existing.config = config;
         if (existing.state.status === "stopped") existing.state.port = config.port ?? null;
+        next.set(config.id, existing);
+      } else {
+        next.set(config.id, this.freshRuntime(config));
       }
-      this.emitUpdate(config.id);
     }
+    this.runtimes = next;
+    for (const config of servers) this.emitUpdate(config.id);
   }
 
   /** Stopped, untracked servers worth checking against already-listening processes. */

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import { Icon } from "./Icon";
 
 interface Props {
@@ -9,11 +9,32 @@ interface Props {
   actions?: ReactNode;
   sticky?: boolean;
   style?: CSSProperties;
+  /** Presence makes the header draggable (a grip handle appears on hover). */
+  onDragStart?: (e: DragEvent<HTMLDivElement>) => void;
+  onDragOver?: (e: DragEvent<HTMLDivElement>) => void;
+  onDrop?: (e: DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: () => void;
+  dragging?: boolean;
 }
 
 /** Collapsible section header for a group of sidebar rows. */
-export function GroupHeader({ label, count, collapsed = false, onToggle, actions, sticky = false, style, ...rest }: Props) {
+export function GroupHeader({
+  label,
+  count,
+  collapsed = false,
+  onToggle,
+  actions,
+  sticky = false,
+  style,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  dragging = false,
+  ...rest
+}: Props) {
   const [hover, setHover] = useState(false);
+  const draggable = !!onDragStart;
   return (
     <div
       role="button"
@@ -22,6 +43,11 @@ export function GroupHeader({ label, count, collapsed = false, onToggle, actions
       onClick={onToggle}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       style={{
         display: "flex",
         alignItems: "center",
@@ -37,10 +63,19 @@ export function GroupHeader({ label, count, collapsed = false, onToggle, actions
         cursor: "default",
         userSelect: "none",
         outline: "none",
+        opacity: dragging ? 0.4 : 1,
         ...style,
       }}
       {...rest}
     >
+      {draggable && (
+        <Icon
+          name="grip-vertical"
+          size={12}
+          color="var(--color-outline)"
+          style={{ opacity: hover ? 1 : 0, transition: "opacity var(--duration-fast) var(--ease-standard)", cursor: "grab" }}
+        />
+      )}
       <Icon
         name="chevron-down"
         size={12}

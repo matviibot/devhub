@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import type { DiscoveredProject, ProjectMeta, ServerSnapshot, UiState } from "@devhub/shared";
 import { Button, EmptyState, GroupHeader, Icon, IconButton, ServerCard, type MenuButtonItem, type ServerCardData } from "../ds";
 import { dur } from "../lib/format";
@@ -29,6 +29,17 @@ interface Props {
   onQuickAdd: (item: DiscoveredProject) => void;
   /** "<existing project>" branch of the Add ▾ menu. */
   onQuickAddToProject: (item: DiscoveredProject, projectId: string) => void;
+  onReorderProjects: (ids: string[]) => void;
+  onReorderServers: (projectId: string, ids: string[]) => void;
+}
+
+/** Moves `draggedId` to sit immediately before `targetId`, preserving the
+ *  relative order of everything else. */
+function reorderIds(ids: string[], draggedId: string, targetId: string): string[] {
+  if (draggedId === targetId) return ids;
+  const rest = ids.filter((id) => id !== draggedId);
+  const targetIdx = rest.indexOf(targetId);
+  return [...rest.slice(0, targetIdx), draggedId, ...rest.slice(targetIdx)];
 }
 
 function serverCard(s: ServerSnapshot, now: number, active: boolean): ServerCardData {
@@ -203,9 +214,36 @@ export function Dashboard({
   onTrack,
   onQuickAdd,
   onQuickAddToProject,
+  onReorderProjects,
+  onReorderServers,
 }: Props) {
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
+
+  // Drag-and-drop is disabled while a filter is active — the visible list is
+  // a subset of the real order, so "drop before this card" would be
+  // ambiguous relative to whatever's currently hidden.
+  const [drag, setDrag] = useState<{ scope: string; id: string } | null>(null);
+  function dragProps(scope: string, id: string, orderedIds: () => string[], onReorder: (ids: string[]) => void) {
+    if (q) return { dragging: false };
+    return {
+      onDragStart: (e: DragEvent) => {
+        e.dataTransfer.effectAllowed = "move";
+        setDrag({ scope, id });
+      },
+      onDragOver: (e: DragEvent) => {
+        if (drag?.scope === scope) e.preventDefault();
+      },
+      onDrop: (e: DragEvent) => {
+        e.preventDefault();
+        if (!drag || drag.scope !== scope || drag.id === id) return;
+        onReorder(reorderIds(orderedIds(), drag.id, id));
+        setDrag(null);
+      },
+      onDragEnd: () => setDrag(null),
+      dragging: drag?.scope === scope && drag.id === id,
+    };
+  }
 
   const ignored = new Set(uiState.ignoredDiscovered);
   const collapsed = new Set(uiState.collapsedGroups);
@@ -263,6 +301,7 @@ export function Dashboard({
               sticky
               collapsed={isCollapsed}
               onToggle={() => toggle(key)}
+              {...dragProps("projects", p.id, () => projects.map((x) => x.id), onReorderProjects)}
               actions={
                 <>
                   <IconButton icon="play" label={`Start all in ${p.name}`} size="sm" onClick={() => onStartProject(p.id)} />
@@ -286,6 +325,7 @@ export function Dashboard({
                     onStop={() => onStop(s.id)}
                     onRestart={() => onRestart(s.id)}
                     onTrack={() => onTrack(s.id)}
+                    {...dragProps(`servers:${p.id}`, s.id, () => projectItems.map((x) => x.id), (ids) => onReorderServers(p.id, ids))}
                   />
                 ))}
                 <DashedTile icon="plus" label="Add server" onClick={() => onAddServer(p.id)} />

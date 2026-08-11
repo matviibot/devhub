@@ -155,5 +155,7 @@ export function useDevhub() {
     deleteServer: (id: string) => send({ type: "deleteServer", id }),
     detectScripts: (cwd: string) => send({ type: "detectScripts", cwd }),
     track: (id: string) => send({ type: "track", id }),
+    reorderProjects: (ids: string[]) => send({ type: "reorderProjects", ids }),
+    reorderServers: (projectId: string, ids: string[]) => send({ type: "reorderServers", projectId, ids }),
   };
 }

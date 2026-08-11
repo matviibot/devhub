@@ -133,4 +133,24 @@ export class ProjectStore {
     }
     return null;
   }
+
+  reorderProjects(ids: string[]) {
+    const byId = new Map(this.projects.map((p) => [p.id, p]));
+    if (ids.length !== byId.size || ids.some((id) => !byId.has(id))) {
+      throw new Error("reorderProjects: ids must be exactly the current project ids");
+    }
+    this.projects = ids.map((id) => byId.get(id)!);
+    this.persist();
+  }
+
+  reorderServers(projectId: string, ids: string[]) {
+    const p = this.project(projectId);
+    if (!p) throw new Error("Project not found");
+    const byId = new Map(p.servers.map((s) => [s.id, s]));
+    if (ids.length !== byId.size || ids.some((id) => !byId.has(id))) {
+      throw new Error("reorderServers: ids must be exactly the project's current server ids");
+    }
+    p.servers = ids.map((id) => byId.get(id)!);
+    this.persist();
+  }
 }

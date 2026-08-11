@@ -102,7 +102,9 @@ export type ClientMessage =
   | { type: "deleteServer"; id: string }
   | { type: "detectScripts"; cwd: string }
   | { type: "track"; id: string }
-  | { type: "setUiState"; state: UiState };
+  | { type: "setUiState"; state: UiState }
+  | { type: "reorderProjects"; ids: string[] }
+  | { type: "reorderServers"; projectId: string; ids: string[] };
 
 // ---- Daemon -> Client ----
 
