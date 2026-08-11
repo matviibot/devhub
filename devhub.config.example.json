@@ -1,0 +1,22 @@
+{
+  "projects": [
+    {
+      "name": "Web app",
+      "cwd": "/Users/you/dev/my-web-app",
+      "command": "npm run dev",
+      "group": "my-app"
+    },
+    {
+      "name": "API server",
+      "cwd": "/Users/you/dev/my-api",
+      "command": "npm run dev",
+      "group": "my-app",
+      "port": 8080
+    },
+    {
+      "name": "Docs site",
+      "cwd": "/Users/you/dev/docs",
+      "command": "npm start"
+    }
+  ]
+}

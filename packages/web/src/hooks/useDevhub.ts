@@ -1,0 +1,116 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ClientMessage, ProjectSnapshot, ServerMessage } from "@devhub/shared";
+
+const RECONNECT_DELAY_MS = 1500;
+
+type LogListener = (lines: string[], isBacklog: boolean) => void;
+
+export function useDevhub() {
+  const [connected, setConnected] = useState(false);
+  const [projects, setProjects] = useState<ProjectSnapshot[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const subscribedRef = useRef<Set<string>>(new Set());
+  // Log lines are pushed straight to xterm.js by listeners rather than kept
+  // in React state — they're append-only and React re-renders would need to
+  // diff trimmed arrays, which is exactly the kind of bookkeeping this avoids.
+  const logListenersRef = useRef<Map<string, Set<LogListener>>>(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+
+    function connect() {
+      if (cancelled) return;
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${proto}//${location.host}/ws`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setConnected(true);
+        for (const id of subscribedRef.current) send({ type: "subscribeLogs", id });
+      };
+
+      ws.onmessage = (event) => {
+        const msg: ServerMessage = JSON.parse(event.data);
+        switch (msg.type) {
+          case "snapshot":
+            setProjects(msg.projects);
+            break;
+          case "projectUpdated":
+            setProjects((prev) => {
+              const idx = prev.findIndex((p) => p.id === msg.project.id);
+              if (idx === -1) return [...prev, msg.project];
+              const next = [...prev];
+              next[idx] = msg.project;
+              return next;
+            });
+            break;
+          case "projectRemoved":
+            setProjects((prev) => prev.filter((p) => p.id !== msg.id));
+            break;
+          case "logBacklog":
+            for (const listener of logListenersRef.current.get(msg.id) ?? []) {
+              listener(msg.lines, true);
+            }
+            break;
+          case "log":
+            for (const listener of logListenersRef.current.get(msg.id) ?? []) {
+              listener(msg.lines, false);
+            }
+            break;
+        }
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        if (!cancelled) reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    connect();
+    return () => {
+      cancelled = true;
+      clearTimeout(reconnectTimer);
+      wsRef.current?.close();
+    };
+  }, []);
+
+  const send = useCallback((msg: ClientMessage) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  }, []);
+
+  const subscribeLogs = useCallback(
+    (id: string) => {
+      if (subscribedRef.current.has(id)) return;
+      subscribedRef.current.add(id);
+      send({ type: "subscribeLogs", id });
+    },
+    [send],
+  );
+
+  /** Registers a listener for a project's log lines; returns an unsubscribe fn. */
+  const addLogListener = useCallback(
+    (id: string, listener: LogListener) => {
+      if (!logListenersRef.current.has(id)) logListenersRef.current.set(id, new Set());
+      logListenersRef.current.get(id)!.add(listener);
+      subscribeLogs(id);
+      return () => {
+        logListenersRef.current.get(id)?.delete(listener);
+      };
+    },
+    [subscribeLogs],
+  );
+
+  return {
+    connected,
+    projects,
+    addLogListener,
+    start: (id: string) => send({ type: "start", id }),
+    stop: (id: string) => send({ type: "stop", id }),
+    restart: (id: string) => send({ type: "restart", id }),
+    startGroup: (group: string) => send({ type: "startGroup", group }),
+    stopGroup: (group: string) => send({ type: "stopGroup", group }),
+  };
+}

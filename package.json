@@ -1,0 +1,13 @@
+{
+  "name": "devhub",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace packages/daemon & npm run dev --workspace packages/web & wait",
+    "build": "npm run build --workspace packages/web && npm run build --workspace packages/daemon",
+    "start": "npm run start --workspace packages/daemon"
+  }
+}
