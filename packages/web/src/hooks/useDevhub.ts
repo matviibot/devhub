@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClientMessage, DetectedScript, ProjectMeta, ServerMessage, ServerSnapshot } from "@devhub/shared";
+import type { ClientMessage, DetectedScript, DiscoveredProject, ProjectMeta, ServerMessage, ServerSnapshot } from "@devhub/shared";
 
 const RECONNECT_DELAY_MS = 1500;
 
@@ -18,6 +18,7 @@ export function useDevhub() {
   const [servers, setServers] = useState<ServerSnapshot[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [detected, setDetected] = useState<Detected | null>(null);
+  const [discovered, setDiscovered] = useState<DiscoveredProject[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedRef = useRef<Set<string>>(new Set());
   // Log lines are pushed straight to xterm.js by listeners rather than kept
@@ -75,6 +76,9 @@ export function useDevhub() {
           case "commandError":
             setError(msg.message);
             break;
+          case "discovered":
+            setDiscovered(msg.items);
+            break;
         }
       };
 
@@ -127,6 +131,7 @@ export function useDevhub() {
     error,
     clearError: () => setError(null),
     detected,
+    discovered,
     addLogListener,
     start: (id: string) => send({ type: "start", id }),
     stop: (id: string) => send({ type: "stop", id }),

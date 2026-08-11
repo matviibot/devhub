@@ -9,14 +9,27 @@ import { stamp } from "./lib/format";
 
 export function App() {
   const devhub = useDevhub();
-  const { connected, projects, servers, error, clearError, addLogListener, start, stop, restart, startProject, stopProject, track } = devhub;
+  const { connected, projects, servers, discovered, error, clearError, addLogListener, start, stop, restart, startProject, stopProject, track } =
+    devhub;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [pendingProjectForServer, setPendingProjectForServer] = useState<{ name: string; root: string } | null>(null);
   const now = useNow();
 
   useEffect(() => {
     if (!selectedId && servers.length > 0) setSelectedId(servers[0].id);
   }, [servers, selectedId]);
+
+  // After creating a project, open Add Server for it as soon as it shows up
+  // in the snapshot — saves a click and nudges toward "project needs a server".
+  useEffect(() => {
+    if (!pendingProjectForServer) return;
+    const match = projects.find((p) => p.name === pendingProjectForServer.name && p.root === pendingProjectForServer.root);
+    if (match) {
+      setDialog({ kind: "server", mode: "add", projectId: match.id });
+      setPendingProjectForServer(null);
+    }
+  }, [projects, pendingProjectForServer]);
 
   const selected = servers.find((s) => s.id === selectedId) ?? null;
   const count = (status: string) => servers.filter((s) => s.state.status === status).length;
@@ -78,6 +91,7 @@ export function App() {
         <Sidebar
           projects={projects}
           servers={servers}
+          discovered={discovered}
           selectedId={selectedId}
           onSelect={setSelectedId}
           onStartProject={startProject}
@@ -89,6 +103,7 @@ export function App() {
           onEditServer={(serverId) => setDialog({ kind: "server", mode: "edit", serverId })}
           onDeleteServer={(id) => setDialog({ kind: "delete", target: "server", id })}
           onTrack={track}
+          onQuickAdd={(item) => setDialog({ kind: "project", mode: "add", prefillName: item.suggestedName, prefillRoot: item.cwd })}
         />
         <LogPanel
           server={selected}
@@ -102,7 +117,12 @@ export function App() {
         />
       </div>
 
-      <Dialogs dialog={dialog} onClose={() => setDialog(null)} devhub={devhub} />
+      <Dialogs
+        dialog={dialog}
+        onClose={() => setDialog(null)}
+        devhub={devhub}
+        onChainToAddServer={(name, root) => setPendingProjectForServer({ name, root })}
+      />
     </div>
   );
 }

@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -13,6 +16,13 @@ export interface ListeningSocket {
 export interface ExternalMatch {
   pid: number;
   port: number;
+}
+
+export interface DiscoveredProject {
+  cwd: string;
+  port: number;
+  pid: number;
+  suggestedName: string;
 }
 
 let lsofWarned = false;
@@ -72,18 +82,50 @@ export async function cwdsForPids(pids: number[]): Promise<Map<number, string>> 
   return map;
 }
 
-/** Matches already-listening processes to stopped servers by exact cwd equality. */
-export async function findExternalMatches(candidates: { id: string; cwd: string }[]): Promise<Map<string, ExternalMatch>> {
-  const matches = new Map<string, ExternalMatch>();
-  if (candidates.length === 0) return matches;
+export interface ScanResult {
+  /** Listeners whose cwd matches a stopped, already-configured server. */
+  matches: Map<string, ExternalMatch>;
+  /** Listeners under $HOME with a package.json that match no configured server at all. */
+  discovered: DiscoveredProject[];
+}
+
+/** One combined lsof pass: matches already-listening processes against stopped
+ *  configured servers (by cwd) and, separately, surfaces listeners that don't
+ *  belong to any configured server as candidates for a brand-new project. */
+export async function scanExternalProcesses(
+  candidates: { id: string; cwd: string }[],
+  configuredCwds: Set<string>,
+  excludeRoot: string,
+): Promise<ScanResult> {
+  const empty: ScanResult = { matches: new Map(), discovered: [] };
   const sockets = await scanListeningSockets();
-  if (sockets.length === 0) return matches;
+  if (sockets.length === 0) return empty;
+
   const cwds = await cwdsForPids([...new Set(sockets.map((s) => s.pid))]);
+
+  const matches = new Map<string, ExternalMatch>();
   for (const c of candidates) {
     const hit = sockets.find((s) => cwds.get(s.pid) === c.cwd);
     if (hit) matches.set(c.id, { pid: hit.pid, port: hit.port });
   }
-  return matches;
+
+  const home = homedir();
+  const seenCwds = new Set<string>();
+  const discovered: DiscoveredProject[] = [];
+  for (const s of sockets) {
+    const cwd = cwds.get(s.pid);
+    if (!cwd || seenCwds.has(cwd) || configuredCwds.has(cwd)) continue;
+    if (cwd !== home && !cwd.startsWith(`${home}/`)) continue;
+    // Never suggest devhub's own checkout as a project to manage.
+    if (cwd === excludeRoot || cwd.startsWith(`${excludeRoot}/`)) continue;
+    // MVP heuristic: only suggest directories that look like a JS/Node project.
+    // Misses Python/Go/Rust/etc. dev servers — worth widening later.
+    if (!existsSync(join(cwd, "package.json"))) continue;
+    seenCwds.add(cwd);
+    discovered.push({ cwd, port: s.port, pid: s.pid, suggestedName: basename(cwd) });
+  }
+
+  return { matches, discovered };
 }
 
 function parseEtimeMs(etime: string): number | null {

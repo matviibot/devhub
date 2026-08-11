@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONFIG_PATH, loadConfig, watchConfig, writeConfig } from "./config.js";
-import { findExternalMatches } from "./externalScan.js";
+import { scanExternalProcesses } from "./externalScan.js";
 import { ProcessManager } from "./processManager.js";
 import { ProjectStore } from "./projectStore.js";
 import { createServer } from "./server.js";
@@ -18,6 +18,7 @@ process.on("unhandledRejection", (err) => {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const webDistPath = resolve(here, "../../web/dist");
+const repoRoot = resolve(here, "../../..");
 const PORT = Number(process.env.DEVHUB_PORT ?? 4317);
 
 if (!existsSync(CONFIG_PATH)) {
@@ -36,7 +37,7 @@ try {
 const store = new ProjectStore(projects);
 const pm = new ProcessManager(store.flatten());
 
-const { httpServer, broadcastSnapshot } = createServer(pm, store, webDistPath);
+const { httpServer, broadcastSnapshot, broadcastDiscovered } = createServer(pm, store, webDistPath);
 
 watchConfig(
   CONFIG_PATH,
@@ -54,13 +55,20 @@ httpServer.listen(PORT, () => {
 });
 
 let scanning = false;
+let lastDiscoveredJson = "";
 setInterval(async () => {
   if (scanning) return; // lsof can be slow with many open files; don't overlap ticks
-  const candidates = pm.stoppedCandidates();
-  if (candidates.length === 0) return;
   scanning = true;
   try {
-    pm.setDetected(await findExternalMatches(candidates));
+    const candidates = pm.stoppedCandidates();
+    const configuredCwds = new Set(store.flatten().map((s) => s.cwd));
+    const { matches, discovered } = await scanExternalProcesses(candidates, configuredCwds, repoRoot);
+    pm.setDetected(matches);
+    const json = JSON.stringify(discovered);
+    if (json !== lastDiscoveredJson) {
+      lastDiscoveredJson = json;
+      broadcastDiscovered(discovered);
+    }
   } catch (err) {
     console.error("[devhub] external-process scan failed:", (err as Error).message);
   } finally {

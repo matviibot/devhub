@@ -6,7 +6,7 @@ import type { useDevhub } from "../hooks/useDevhub";
 type Devhub = ReturnType<typeof useDevhub>;
 
 export type DialogState =
-  | { kind: "project"; mode: "add" }
+  | { kind: "project"; mode: "add"; prefillName?: string; prefillRoot?: string }
   | { kind: "project"; mode: "edit"; projectId: string }
   | { kind: "server"; mode: "add"; projectId: string }
   | { kind: "server"; mode: "edit"; serverId: string }
@@ -18,11 +18,14 @@ interface Props {
   dialog: DialogState;
   onClose: () => void;
   devhub: Devhub;
+  /** Called instead of onClose after creating a new project — the caller
+   *  chains into an Add Server dialog once the project shows up. */
+  onChainToAddServer: (name: string, root: string) => void;
 }
 
 const DETECT_DEBOUNCE_MS = 300;
 
-export function Dialogs({ dialog, onClose, devhub }: Props) {
+export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) {
   const { projects, servers, createProject, updateProject, deleteProject, createServer, updateServer, deleteServer, detectScripts, detected } =
     devhub;
 
@@ -48,8 +51,8 @@ export function Dialogs({ dialog, onClose, devhub }: Props) {
     if (!dialog) return;
     if (dialog.kind === "project") {
       const p = dialog.mode === "edit" ? projects.find((x) => x.id === dialog.projectId) : null;
-      setName(p?.name ?? "");
-      setRoot(p?.root ?? "");
+      setName(p?.name ?? (dialog.mode === "add" ? (dialog.prefillName ?? "") : ""));
+      setRoot(p?.root ?? (dialog.mode === "add" ? (dialog.prefillRoot ?? "") : ""));
     } else if (dialog.kind === "server") {
       const s = dialog.mode === "edit" ? servers.find((x) => x.id === dialog.serverId) : null;
       setName(s?.name ?? "");
@@ -96,8 +99,13 @@ export function Dialogs({ dialog, onClose, devhub }: Props) {
     if (!dialog) return;
     if (dialog.kind === "project") {
       if (!name.trim() || !root.trim()) return;
-      if (dialog.mode === "edit") updateProject(dialog.projectId, name, root);
-      else createProject(name, root);
+      if (dialog.mode === "edit") {
+        updateProject(dialog.projectId, name, root);
+      } else {
+        createProject(name, root);
+        onChainToAddServer(name, root);
+        return;
+      }
     } else if (dialog.kind === "server") {
       if (!name.trim() || !command.trim()) return;
       const portNum = port.trim() ? Number(port.trim()) : undefined;

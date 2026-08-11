@@ -48,6 +48,15 @@ export interface DetectedExternal {
   port: number;
 }
 
+/** A running process under $HOME that looks like a dev server (has a
+ *  package.json) but matches no configured server at all. */
+export interface DiscoveredProject {
+  cwd: string;
+  port: number;
+  pid: number;
+  suggestedName: string;
+}
+
 export interface ServerSnapshot {
   id: string;
   projectId: string;
@@ -96,4 +105,5 @@ export type ServerMessage =
   | { type: "log"; id: string; lines: string[] }
   | { type: "logBacklog"; id: string; lines: string[] }
   | { type: "scriptsDetected"; projectId: string; dir: string; scripts: DetectedScript[]; hasPackageJson: boolean }
+  | { type: "discovered"; items: DiscoveredProject[] }
   | { type: "commandError"; message: string };

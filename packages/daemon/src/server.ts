@@ -1,7 +1,7 @@
 import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
-import type { ClientMessage, ServerMessage } from "@devhub/shared";
+import type { ClientMessage, DiscoveredProject, ServerMessage } from "@devhub/shared";
 import { detectScripts, resolveCwd } from "./config.js";
 import type { ProcessManager } from "./processManager.js";
 import type { ProjectStore } from "./projectStore.js";
@@ -29,6 +29,12 @@ export function createServer(pm: ProcessManager, store: ProjectStore, webDistPat
     for (const c of clients) send(c.ws, snapshotMsg());
   }
 
+  let lastDiscovered: DiscoveredProject[] = [];
+  function broadcastDiscovered(items: DiscoveredProject[]) {
+    lastDiscovered = items;
+    for (const c of clients) send(c.ws, { type: "discovered", items });
+  }
+
   /** Re-syncs ProcessManager from the store after a config-mutating op. */
   function resync() {
     pm.applyConfig(store.flatten());
@@ -47,6 +53,7 @@ export function createServer(pm: ProcessManager, store: ProjectStore, webDistPat
     const client: ClientConn = { ws, subscribed: new Set() };
     clients.add(client);
     send(ws, snapshotMsg());
+    if (lastDiscovered.length) send(ws, { type: "discovered", items: lastDiscovered });
 
     ws.on("message", (raw) => {
       let msg: ClientMessage;
@@ -137,5 +144,5 @@ export function createServer(pm: ProcessManager, store: ProjectStore, webDistPat
     for (const c of clients) if (c.subscribed.has(id)) send(c.ws, { type: "log", id, lines });
   });
 
-  return { httpServer, broadcastSnapshot };
+  return { httpServer, broadcastSnapshot, broadcastDiscovered };
 }
