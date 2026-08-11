@@ -47,7 +47,6 @@ export interface RuntimeServerConfig {
   projectId: string;
   name: string;
   command: string;
-  dir: string;
   cwd: string;
   port?: number;
 }

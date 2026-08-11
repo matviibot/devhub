@@ -5,7 +5,7 @@ import type { RuntimeServerConfig } from "./processManager.js";
 interface ServerInput {
   name: string;
   command: string;
-  dir: string;
+  cwd: string;
   port?: number;
 }
 
@@ -25,7 +25,7 @@ export class ProjectStore {
   }
 
   metas(): ProjectMeta[] {
-    return this.projects.map((p) => ({ id: p.id, name: p.name, root: p.root }));
+    return this.projects.map((p) => ({ id: p.id, name: p.name }));
   }
 
   project(id: string): ProjectConfig | undefined {
@@ -39,8 +39,7 @@ export class ProjectStore {
         projectId: p.id,
         name: s.name,
         command: s.command,
-        dir: s.dir,
-        cwd: resolveCwd(p.root, s.dir),
+        cwd: resolveCwd(s.cwd),
         port: s.port,
       })),
     );
@@ -62,27 +61,22 @@ export class ProjectStore {
     return `${root}-${n}`;
   }
 
-  createProject(name: string, root: string): ProjectConfig {
+  createProject(name: string): ProjectConfig {
     name = name.trim();
-    root = root.trim();
     if (!name) throw new Error("Project name is required");
-    if (!root) throw new Error("Root folder is required");
     const id = this.uniqueId(name, new Set(this.projects.map((p) => p.id)));
-    const project: ProjectConfig = { id, name, root, servers: [] };
+    const project: ProjectConfig = { id, name, servers: [] };
     this.projects.push(project);
     this.persist();
     return project;
   }
 
-  updateProject(id: string, name: string, root: string): ProjectConfig {
+  updateProject(id: string, name: string): ProjectConfig {
     const p = this.project(id);
     if (!p) throw new Error("Project not found");
     name = name.trim();
-    root = root.trim();
     if (!name) throw new Error("Project name is required");
-    if (!root) throw new Error("Root folder is required");
     p.name = name;
-    p.root = root;
     this.persist();
     return p;
   }
@@ -97,10 +91,12 @@ export class ProjectStore {
     if (!p) throw new Error("Project not found");
     const name = input.name.trim();
     const command = input.command.trim();
+    const cwd = input.cwd.trim();
     if (!name) throw new Error("Server name is required");
     if (!command) throw new Error("Command is required");
+    if (!cwd) throw new Error("Working directory is required");
     const id = this.uniqueId(`${p.name}-${name}`, this.allServerIds());
-    const server: ServerConfig = { id, name, command, dir: input.dir.trim() || ".", port: input.port };
+    const server: ServerConfig = { id, name, command, cwd, port: input.port };
     p.servers.push(server);
     this.persist();
     return server;
@@ -112,11 +108,13 @@ export class ProjectStore {
       if (!s) continue;
       const name = input.name.trim();
       const command = input.command.trim();
+      const cwd = input.cwd.trim();
       if (!name) throw new Error("Server name is required");
       if (!command) throw new Error("Command is required");
+      if (!cwd) throw new Error("Working directory is required");
       s.name = name;
       s.command = command;
-      s.dir = input.dir.trim() || ".";
+      s.cwd = cwd;
       s.port = input.port;
       this.persist();
       return s;

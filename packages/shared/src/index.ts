@@ -9,16 +9,15 @@ export interface ServerConfig {
   id: string;
   name: string;
   command: string;
-  /** Relative to the owning project's `root`. "." means the root itself. */
-  dir: string;
+  /** Absolute or ~-relative path to this server's own working directory —
+   *  independent of its project, which is just a label to group it under. */
+  cwd: string;
   port?: number;
 }
 
 export interface ProjectConfig {
   id: string;
   name: string;
-  /** Absolute or ~-relative path to the project's repo folder. */
-  root: string;
   servers: ServerConfig[];
 }
 
@@ -27,7 +26,6 @@ export interface ProjectConfig {
 export interface ProjectMeta {
   id: string;
   name: string;
-  root: string;
 }
 
 export interface ServerState {
@@ -62,8 +60,7 @@ export interface ServerSnapshot {
   projectId: string;
   name: string;
   command: string;
-  dir: string;
-  /** Resolved absolute working directory (root + dir, ~-expanded). */
+  /** Resolved absolute working directory (~-expanded). */
   cwd: string;
   port?: number;
   state: ServerState;
@@ -87,13 +84,13 @@ export type ClientMessage =
   | { type: "stopProject"; projectId: string }
   | { type: "subscribeLogs"; id: string }
   | { type: "unsubscribeLogs"; id: string }
-  | { type: "createProject"; name: string; root: string }
-  | { type: "updateProject"; id: string; name: string; root: string }
+  | { type: "createProject"; name: string }
+  | { type: "updateProject"; id: string; name: string }
   | { type: "deleteProject"; id: string }
-  | { type: "createServer"; projectId: string; name: string; command: string; dir: string; port?: number }
-  | { type: "updateServer"; id: string; name: string; command: string; dir: string; port?: number }
+  | { type: "createServer"; projectId: string; name: string; command: string; cwd: string; port?: number }
+  | { type: "updateServer"; id: string; name: string; command: string; cwd: string; port?: number }
   | { type: "deleteServer"; id: string }
-  | { type: "detectScripts"; projectId: string; dir: string }
+  | { type: "detectScripts"; cwd: string }
   | { type: "track"; id: string };
 
 // ---- Daemon -> Client ----
@@ -104,6 +101,6 @@ export type ServerMessage =
   | { type: "serverRemoved"; id: string }
   | { type: "log"; id: string; lines: string[] }
   | { type: "logBacklog"; id: string; lines: string[] }
-  | { type: "scriptsDetected"; projectId: string; dir: string; scripts: DetectedScript[]; hasPackageJson: boolean }
+  | { type: "scriptsDetected"; cwd: string; scripts: DetectedScript[]; hasPackageJson: boolean }
   | { type: "discovered"; items: DiscoveredProject[] }
   | { type: "commandError"; message: string };

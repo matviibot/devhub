@@ -6,8 +6,7 @@ const RECONNECT_DELAY_MS = 1500;
 type LogListener = (lines: string[], isBacklog: boolean) => void;
 
 interface Detected {
-  projectId: string;
-  dir: string;
+  cwd: string;
   scripts: DetectedScript[];
   hasPackageJson: boolean;
 }
@@ -71,7 +70,7 @@ export function useDevhub() {
             }
             break;
           case "scriptsDetected":
-            setDetected({ projectId: msg.projectId, dir: msg.dir, scripts: msg.scripts, hasPackageJson: msg.hasPackageJson });
+            setDetected({ cwd: msg.cwd, scripts: msg.scripts, hasPackageJson: msg.hasPackageJson });
             break;
           case "commandError":
             setError(msg.message);
@@ -138,15 +137,15 @@ export function useDevhub() {
     restart: (id: string) => send({ type: "restart", id }),
     startProject: (projectId: string) => send({ type: "startProject", projectId }),
     stopProject: (projectId: string) => send({ type: "stopProject", projectId }),
-    createProject: (name: string, root: string) => send({ type: "createProject", name, root }),
-    updateProject: (id: string, name: string, root: string) => send({ type: "updateProject", id, name, root }),
+    createProject: (name: string) => send({ type: "createProject", name }),
+    updateProject: (id: string, name: string) => send({ type: "updateProject", id, name }),
     deleteProject: (id: string) => send({ type: "deleteProject", id }),
-    createServer: (projectId: string, name: string, command: string, dir: string, port?: number) =>
-      send({ type: "createServer", projectId, name, command, dir, port }),
-    updateServer: (id: string, name: string, command: string, dir: string, port?: number) =>
-      send({ type: "updateServer", id, name, command, dir, port }),
+    createServer: (projectId: string, name: string, command: string, cwd: string, port?: number) =>
+      send({ type: "createServer", projectId, name, command, cwd, port }),
+    updateServer: (id: string, name: string, command: string, cwd: string, port?: number) =>
+      send({ type: "updateServer", id, name, command, cwd, port }),
     deleteServer: (id: string) => send({ type: "deleteServer", id }),
-    detectScripts: (projectId: string, dir: string) => send({ type: "detectScripts", projectId, dir }),
+    detectScripts: (cwd: string) => send({ type: "detectScripts", cwd }),
     track: (id: string) => send({ type: "track", id }),
   };
 }

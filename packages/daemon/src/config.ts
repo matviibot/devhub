@@ -14,17 +14,26 @@ interface RawServer {
   id?: string;
   name: string;
   command: string;
+  cwd?: string;
+  /** @deprecated legacy field, relative to the owning project's `root` */
   dir?: string;
   port?: number;
 }
 interface RawProject {
   id?: string;
   name: string;
-  root: string;
+  /** @deprecated legacy field — projects no longer have a shared root */
+  root?: string;
   servers?: RawServer[];
 }
 interface RawConfigFile {
   projects: RawProject[];
+}
+
+/** Joins a legacy project `root` with a server's legacy relative `dir`. */
+function legacyJoin(root: string, dir: string): string {
+  if (!dir || dir === ".") return root;
+  return `${root.replace(/\/$/, "")}/${dir.replace(/^\.?\//, "")}`;
 }
 
 export function slugify(name: string): string {
@@ -42,11 +51,9 @@ export function expandHome(path: string): string {
   return path;
 }
 
-/** Resolves a server's absolute working directory from its project's root + its own relative dir. */
-export function resolveCwd(root: string, dir: string): string {
-  const absRoot = expandHome(root);
-  if (!dir || dir === ".") return absRoot;
-  return join(absRoot, dir);
+/** Resolves a server's stored working directory to an absolute path. */
+export function resolveCwd(cwd: string): string {
+  return expandHome(cwd);
 }
 
 export function parseConfig(raw: string): ProjectConfig[] {
@@ -57,10 +64,11 @@ export function parseConfig(raw: string): ProjectConfig[] {
 
   const seenProjectIds = new Set<string>();
   const seenServerIds = new Set<string>();
+  let migrated = false;
 
-  return data.projects.map((p) => {
-    if (!p.name || !p.root) {
-      throw new Error(`Project entry missing required field(s) (name/root): ${JSON.stringify(p)}`);
+  const projects = data.projects.map((p) => {
+    if (!p.name) {
+      throw new Error(`Project entry missing required field "name": ${JSON.stringify(p)}`);
     }
     const projectId = p.id ?? slugify(p.name);
     if (seenProjectIds.has(projectId)) {
@@ -72,16 +80,27 @@ export function parseConfig(raw: string): ProjectConfig[] {
       if (!s.name || !s.command) {
         throw new Error(`Server entry missing required field(s) (name/command) in project "${p.name}": ${JSON.stringify(s)}`);
       }
+      let cwd = s.cwd;
+      if (!cwd && p.root) {
+        cwd = legacyJoin(p.root, s.dir ?? ".");
+        migrated = true;
+      }
+      if (!cwd) {
+        throw new Error(`Server entry missing required field "cwd" in project "${p.name}": ${JSON.stringify(s)}`);
+      }
       const serverId = s.id ?? slugify(`${p.name}-${s.name}`);
       if (seenServerIds.has(serverId)) {
         throw new Error(`Duplicate server id "${serverId}" — give it an explicit unique "id" field`);
       }
       seenServerIds.add(serverId);
-      return { id: serverId, name: s.name, command: s.command, dir: s.dir ?? ".", port: s.port };
+      return { id: serverId, name: s.name, command: s.command, cwd, port: s.port };
     });
 
-    return { id: projectId, name: p.name, root: p.root, servers };
+    return { id: projectId, name: p.name, servers };
   });
+
+  if (migrated) console.log("[devhub] migrated legacy project root/dir fields to per-server cwd — will be rewritten on next save");
+  return projects;
 }
 
 export function loadConfig(path: string = CONFIG_PATH): ProjectConfig[] {
@@ -95,8 +114,7 @@ export function writeConfig(projects: ProjectConfig[], path: string = CONFIG_PAT
     projects: projects.map((p) => ({
       id: p.id,
       name: p.name,
-      root: p.root,
-      servers: p.servers.map((s) => ({ id: s.id, name: s.name, command: s.command, dir: s.dir, ...(s.port ? { port: s.port } : {}) })),
+      servers: p.servers.map((s) => ({ id: s.id, name: s.name, command: s.command, cwd: s.cwd, ...(s.port ? { port: s.port } : {}) })),
     })),
   };
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");

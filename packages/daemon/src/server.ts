@@ -87,11 +87,11 @@ export function createServer(pm: ProcessManager, store: ProjectStore, webDistPat
             client.subscribed.delete(msg.id);
             break;
           case "createProject":
-            store.createProject(msg.name, msg.root);
+            store.createProject(msg.name);
             resync();
             break;
           case "updateProject":
-            store.updateProject(msg.id, msg.name, msg.root);
+            store.updateProject(msg.id, msg.name);
             resync();
             break;
           case "deleteProject":
@@ -100,12 +100,12 @@ export function createServer(pm: ProcessManager, store: ProjectStore, webDistPat
             resync();
             break;
           case "createServer":
-            store.createServer(msg.projectId, { name: msg.name, command: msg.command, dir: msg.dir, port: msg.port });
+            store.createServer(msg.projectId, { name: msg.name, command: msg.command, cwd: msg.cwd, port: msg.port });
             resync();
             break;
           case "updateServer": {
             const wasRunning = pm.snapshot(msg.id)?.state.status !== "stopped";
-            store.updateServer(msg.id, { name: msg.name, command: msg.command, dir: msg.dir, port: msg.port });
+            store.updateServer(msg.id, { name: msg.name, command: msg.command, cwd: msg.cwd, port: msg.port });
             resync();
             if (wasRunning) pm.logNote(msg.id, "[devhub] config changed — restart to apply");
             break;
@@ -116,10 +116,9 @@ export function createServer(pm: ProcessManager, store: ProjectStore, webDistPat
             resync();
             break;
           case "detectScripts": {
-            const project = store.project(msg.projectId);
-            const abs = resolveCwd(project?.root ?? "", msg.dir);
+            const abs = resolveCwd(msg.cwd);
             const { scripts, hasPackageJson } = detectScripts(abs);
-            send(ws, { type: "scriptsDetected", projectId: msg.projectId, dir: msg.dir, scripts, hasPackageJson });
+            send(ws, { type: "scriptsDetected", cwd: msg.cwd, scripts, hasPackageJson });
             break;
           }
           case "track":

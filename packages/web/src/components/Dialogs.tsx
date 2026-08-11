@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Dialog, Icon, IconButton, TextField } from "../ds";
-import { joinPath } from "../lib/paths";
 import type { useDevhub } from "../hooks/useDevhub";
 
 type Devhub = ReturnType<typeof useDevhub>;
 
 export type DialogState =
-  | { kind: "project"; mode: "add"; prefillName?: string; prefillRoot?: string }
+  | { kind: "project"; mode: "add"; prefillName?: string; prefillCwd?: string; prefillPort?: number }
   | { kind: "project"; mode: "edit"; projectId: string }
-  | { kind: "server"; mode: "add"; projectId: string }
+  | { kind: "server"; mode: "add"; projectId: string; prefillName?: string; prefillCwd?: string; prefillPort?: number }
   | { kind: "server"; mode: "edit"; serverId: string }
   | { kind: "delete"; target: "project"; id: string }
   | { kind: "delete"; target: "server"; id: string }
@@ -19,8 +18,9 @@ interface Props {
   onClose: () => void;
   devhub: Devhub;
   /** Called instead of onClose after creating a new project — the caller
-   *  chains into an Add Server dialog once the project shows up. */
-  onChainToAddServer: (name: string, root: string) => void;
+   *  chains into an Add Server dialog once the project shows up, carrying
+   *  over any cwd/port that was already known (e.g. from a discovered item). */
+  onChainToAddServer: (name: string, prefill: { cwd?: string; port?: number }) => void;
 }
 
 const DETECT_DEBOUNCE_MS = 300;
@@ -30,9 +30,8 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) 
     devhub;
 
   const [name, setName] = useState("");
-  const [root, setRoot] = useState("");
   const [command, setCommand] = useState("");
-  const [dir, setDir] = useState(".");
+  const [cwd, setCwd] = useState("");
   const [port, setPort] = useState("");
   const detectTimer = useRef<ReturnType<typeof setTimeout>>();
 
@@ -52,28 +51,29 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) 
     if (dialog.kind === "project") {
       const p = dialog.mode === "edit" ? projects.find((x) => x.id === dialog.projectId) : null;
       setName(p?.name ?? (dialog.mode === "add" ? (dialog.prefillName ?? "") : ""));
-      setRoot(p?.root ?? (dialog.mode === "add" ? (dialog.prefillRoot ?? "") : ""));
     } else if (dialog.kind === "server") {
       const s = dialog.mode === "edit" ? servers.find((x) => x.id === dialog.serverId) : null;
-      setName(s?.name ?? "");
+      setName(s?.name ?? (dialog.mode === "add" ? (dialog.prefillName ?? "") : ""));
       setCommand(s?.command ?? "");
-      setDir(s?.dir ?? ".");
-      setPort(s?.port ? String(s.port) : "");
+      setCwd(s?.cwd ?? (dialog.mode === "add" ? (dialog.prefillCwd ?? "") : ""));
+      setPort(s?.port ? String(s.port) : dialog.mode === "add" && dialog.prefillPort ? String(dialog.prefillPort) : "");
     }
   }, [dialogKey]);
 
   useEffect(() => {
-    if (dialog?.kind !== "server" || !projectId) return;
+    if (dialog?.kind !== "server") return;
     clearTimeout(detectTimer.current);
-    detectTimer.current = setTimeout(() => detectScripts(projectId, dir), DETECT_DEBOUNCE_MS);
+    const trimmed = cwd.trim();
+    if (!trimmed) return;
+    detectTimer.current = setTimeout(() => detectScripts(trimmed), DETECT_DEBOUNCE_MS);
     return () => clearTimeout(detectTimer.current);
-  }, [dialog?.kind, projectId, dir]);
+  }, [dialog?.kind, cwd]);
 
   const scripts = useMemo(() => {
-    if (dialog?.kind !== "server" || !detected || detected.projectId !== projectId || detected.dir !== dir) return [];
+    if (dialog?.kind !== "server" || !detected || detected.cwd !== cwd.trim()) return [];
     return detected.scripts;
-  }, [dialog, detected, projectId, dir]);
-  const noPackageJson = dialog?.kind === "server" && detected?.projectId === projectId && detected?.dir === dir && !detected.hasPackageJson;
+  }, [dialog, detected, cwd]);
+  const noPackageJson = dialog?.kind === "server" && detected?.cwd === cwd.trim() && !detected.hasPackageJson;
 
   useEffect(() => {
     if (!dialog) return;
@@ -91,26 +91,26 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) 
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dialog, name, root, command, dir, port]);
+  }, [dialog, name, command, cwd, port]);
 
   if (!dialog) return null;
 
   function submit() {
     if (!dialog) return;
     if (dialog.kind === "project") {
-      if (!name.trim() || !root.trim()) return;
+      if (!name.trim()) return;
       if (dialog.mode === "edit") {
-        updateProject(dialog.projectId, name, root);
+        updateProject(dialog.projectId, name);
       } else {
-        createProject(name, root);
-        onChainToAddServer(name, root);
+        createProject(name);
+        onChainToAddServer(name, { cwd: dialog.prefillCwd, port: dialog.prefillPort });
         return;
       }
     } else if (dialog.kind === "server") {
-      if (!name.trim() || !command.trim()) return;
+      if (!name.trim() || !command.trim() || !cwd.trim()) return;
       const portNum = port.trim() ? Number(port.trim()) : undefined;
-      if (dialog.mode === "edit") updateServer(dialog.serverId, name, command, dir, portNum);
-      else if (projectId) createServer(projectId, name, command, dir, portNum);
+      if (dialog.mode === "edit") updateServer(dialog.serverId, name, command, cwd, portNum);
+      else if (projectId) createServer(projectId, name, command, cwd, portNum);
     } else if (dialog.kind === "delete") {
       if (dialog.target === "project") deleteProject(dialog.id);
       else deleteServer(dialog.id);
@@ -124,26 +124,23 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) 
       <Dialog
         icon={editing ? "folder-cog" : "folder-plus"}
         title={editing ? "Edit project" : "New project"}
-        width="420px"
+        width="360px"
         onClose={onClose}
-        footer={<DialogFooter onClose={onClose} onSubmit={submit} disabled={!name.trim() || !root.trim()} label={editing ? "Save" : "Create project"} icon={editing ? "check" : "plus"} />}
+        footer={<DialogFooter onClose={onClose} onSubmit={submit} disabled={!name.trim()} label={editing ? "Save" : "Create project"} icon={editing ? "check" : "plus"} />}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <TextField id="dh-p-name" label="Name" value={name} onChange={setName} placeholder="Storefront" autoFocus />
-          <TextField
-            id="dh-p-root"
-            label="Root folder"
-            value={root}
-            onChange={setRoot}
-            placeholder="~/code/storefront"
-            mono
-            hint={
-              <span style={{ font: "400 11px/16px var(--font-mono)", color: "var(--color-outline)" }}>
-                {root.trim() ? "Server working directories are relative to this path" : "Absolute or ~-relative path to the repo folder"}
-              </span>
-            }
-          />
-        </div>
+        <TextField
+          id="dh-p-name"
+          label="Name"
+          value={name}
+          onChange={setName}
+          placeholder="Storefront"
+          autoFocus
+          hint={
+            <span style={{ font: "400 11px/16px var(--font-mono)", color: "var(--color-outline)" }}>
+              Just a label — servers you add to it can live anywhere
+            </span>
+          }
+        />
       </Dialog>
     );
   }
@@ -156,34 +153,15 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) 
         title={`${editing ? "Edit server" : "New server"}${project ? ` · ${project.name}` : ""}`}
         width="520px"
         onClose={onClose}
-        footer={<DialogFooter onClose={onClose} onSubmit={submit} disabled={!name.trim() || !command.trim()} label={editing ? "Save" : "Add server"} icon={editing ? "check" : "plus"} />}
+        footer={<DialogFooter onClose={onClose} onSubmit={submit} disabled={!name.trim() || !command.trim() || !cwd.trim()} label={editing ? "Save" : "Add server"} icon={editing ? "check" : "plus"} />}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              height: 24,
-              padding: "0 8px",
-              borderRadius: "var(--radius-sm)",
-              background: "var(--color-surface-container-lowest)",
-              boxShadow: "var(--inset-hairline)",
-              font: "400 11px/1 var(--font-mono)",
-              color: "var(--color-on-surface-variant)",
-              overflow: "hidden",
-            }}
-          >
-            <Icon name="folder" size={13} color="var(--color-outline)" />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{joinPath(project?.root ?? "", dir)}</span>
-          </div>
-
           <div style={{ display: "grid", gridTemplateColumns: "1fr 96px", gap: 12 }}>
             <TextField id="dh-s-name" label="Name" value={name} onChange={setName} placeholder="web" autoFocus />
             <TextField id="dh-s-port" label="Port" value={port} onChange={(v) => setPort(v.replace(/[^0-9]/g, ""))} placeholder="optional" mono />
           </div>
 
-          <TextField id="dh-s-dir" label="Working directory" value={dir} onChange={setDir} placeholder="apps/web" mono />
+          <TextField id="dh-s-cwd" label="Working directory" value={cwd} onChange={setCwd} placeholder="~/code/storefront/apps/web" mono />
           <TextField id="dh-s-cmd" label="Command" value={command} onChange={setCommand} placeholder="npm run dev" mono />
 
           <div
@@ -230,11 +208,11 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) 
             })}
             {scripts.length === 0 && (
               <span style={{ font: "400 11px/22px var(--font-mono)", color: "var(--color-outline)" }}>
-                {noPackageJson ? `nothing to detect in ${dir || "."} — type the command` : "scanning…"}
+                {!cwd.trim() ? "enter a working directory to detect scripts" : noPackageJson ? `nothing to detect in ${cwd.trim()} — type the command` : "scanning…"}
               </span>
             )}
             <span style={{ flex: 1 }} />
-            <IconButton icon="refresh-cw" label="Rescan directory" size="sm" onClick={() => projectId && detectScripts(projectId, dir)} />
+            <IconButton icon="refresh-cw" label="Rescan directory" size="sm" onClick={() => cwd.trim() && detectScripts(cwd.trim())} />
           </div>
         </div>
       </Dialog>
@@ -276,7 +254,9 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer }: Props) 
             color: "var(--color-on-surface-variant)",
           }}
         >
-          <span style={{ color: "var(--color-on-surface)" }}>{isProject ? targetProject?.root : targetServer?.command}</span>
+          <span style={{ color: "var(--color-on-surface)" }}>
+            {isProject ? projectServers.map((s) => s.name).join(", ") || "no servers" : targetServer?.command}
+          </span>
           <span>
             {isProject
               ? `${projectServers.length} servers removed · ${runningCount} processes stopped`
