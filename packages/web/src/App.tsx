@@ -9,7 +9,7 @@ import { stamp } from "./lib/format";
 
 export function App() {
   const devhub = useDevhub();
-  const { connected, projects, servers, error, clearError, addLogListener, start, stop, restart, startProject, stopProject } = devhub;
+  const { connected, projects, servers, error, clearError, addLogListener, start, stop, restart, startProject, stopProject, track } = devhub;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const now = useNow();
@@ -88,6 +88,7 @@ export function App() {
           onAddServer={(projectId) => setDialog({ kind: "server", mode: "add", projectId })}
           onEditServer={(serverId) => setDialog({ kind: "server", mode: "edit", serverId })}
           onDeleteServer={(id) => setDialog({ kind: "delete", target: "server", id })}
+          onTrack={track}
         />
         <LogPanel
           server={selected}
@@ -96,6 +97,7 @@ export function App() {
           onStop={stop}
           onRestart={restart}
           onEdit={(serverId) => setDialog({ kind: "server", mode: "edit", serverId })}
+          onTrack={track}
           now={now}
         />
       </div>

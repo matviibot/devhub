@@ -142,5 +142,6 @@ export function useDevhub() {
       send({ type: "updateServer", id, name, command, dir, port }),
     deleteServer: (id: string) => send({ type: "deleteServer", id }),
     detectScripts: (projectId: string, dir: string) => send({ type: "detectScripts", projectId, dir }),
+    track: (id: string) => send({ type: "track", id }),
   };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import type { ServerSnapshot } from "@devhub/shared";
+import type { ServerSnapshot, ServerState } from "@devhub/shared";
 import { Button, EmptyState, IconButton, StatusDot } from "../ds";
 import { dur, stamp } from "../lib/format";
 import { tildify } from "../lib/paths";
@@ -10,6 +10,24 @@ const NO_WRAP_COLS = 500;
 const MAX_BUFFERED_LINES = 2000;
 const DIM = "\x1b[90m";
 const RESET = "\x1b[0m";
+
+function emptyStateProps(server: ServerSnapshot | null, state: ServerState | undefined) {
+  if (!server || !state) {
+    return { icon: "folder-plus", title: "No server selected", description: "Add a project in the sidebar, then add servers to it." };
+  }
+  if (state.external) {
+    return {
+      icon: "plug",
+      title: "Running outside devhub",
+      description: "No output captured yet — Restart to begin streaming its output.",
+    };
+  }
+  return {
+    icon: "terminal",
+    title: "Output cleared",
+    description: state.status === "running" ? "New lines appear as the process writes them." : "Start the process to stream its output.",
+  };
+}
 
 interface LineEntry {
   text: string;
@@ -28,10 +46,11 @@ interface Props {
   onStop: (id: string) => void;
   onRestart: (id: string) => void;
   onEdit: (id: string) => void;
+  onTrack: (id: string) => void;
   now: number;
 }
 
-export function LogPanel({ server, addLogListener, onStart, onStop, onRestart, onEdit, now }: Props) {
+export function LogPanel({ server, addLogListener, onStart, onStop, onRestart, onEdit, onTrack, now }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -168,6 +187,7 @@ export function LogPanel({ server, addLogListener, onStart, onStop, onRestart, o
   const state = server?.state;
   const startDisabled = !state || state.status === "running" || state.status === "starting";
   const stopDisabled = !state || state.status === "stopped";
+  const isDetectedUntracked = !!server?.detected && state?.status === "stopped";
 
   return (
     <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0, background: "var(--color-surface)" }}>
@@ -225,9 +245,15 @@ export function LogPanel({ server, addLogListener, onStart, onStop, onRestart, o
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 6, flex: "0 0 auto" }}>
               <IconButton icon="pencil" label="Edit server" size="sm" onClick={() => onEdit(server.id)} />
-              <Button variant="primary" size="sm" icon="play" disabled={startDisabled} onClick={() => onStart(server.id)}>
-                Start
-              </Button>
+              {isDetectedUntracked ? (
+                <Button variant="primary" size="sm" icon="plug" onClick={() => onTrack(server.id)}>
+                  Track
+                </Button>
+              ) : (
+                <Button variant="primary" size="sm" icon="play" disabled={startDisabled} onClick={() => onStart(server.id)}>
+                  Start
+                </Button>
+              )}
               <Button variant="secondary" size="sm" icon="rotate-cw" disabled={stopDisabled} onClick={() => onRestart(server.id)}>
                 Restart
               </Button>
@@ -280,17 +306,7 @@ export function LogPanel({ server, addLogListener, onStart, onStop, onRestart, o
         <div style={{ position: "absolute", inset: 0, padding: "8px 0" }} ref={containerRef} />
         {lineCount === 0 && (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-            <EmptyState
-              icon={server ? "terminal" : "folder-plus"}
-              title={server ? "Output cleared" : "No server selected"}
-              description={
-                server
-                  ? state?.status === "running"
-                    ? "New lines appear as the process writes them."
-                    : "Start the process to stream its output."
-                  : "Add a project in the sidebar, then add servers to it."
-              }
-            />
+            <EmptyState {...emptyStateProps(server, state)} />
           </div>
         )}
       </div>

@@ -115,6 +115,9 @@ export function createServer(pm: ProcessManager, store: ProjectStore, webDistPat
             send(ws, { type: "scriptsDetected", projectId: msg.projectId, dir: msg.dir, scripts, hasPackageJson });
             break;
           }
+          case "track":
+            pm.track(msg.id).catch((err) => send(ws, { type: "commandError", message: (err as Error).message }));
+            break;
         }
       } catch (err) {
         send(ws, { type: "commandError", message: (err as Error).message });

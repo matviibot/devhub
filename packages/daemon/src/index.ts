@@ -2,9 +2,12 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONFIG_PATH, loadConfig, watchConfig, writeConfig } from "./config.js";
+import { findExternalMatches } from "./externalScan.js";
 import { ProcessManager } from "./processManager.js";
 import { ProjectStore } from "./projectStore.js";
 import { createServer } from "./server.js";
+
+const DETECT_INTERVAL_MS = 5000;
 
 process.on("uncaughtException", (err) => {
   console.error("[devhub] uncaught exception (daemon stays up):", err);
@@ -49,6 +52,21 @@ watchConfig(
 httpServer.listen(PORT, () => {
   console.log(`[devhub] listening on http://localhost:${PORT}`);
 });
+
+let scanning = false;
+setInterval(async () => {
+  if (scanning) return; // lsof can be slow with many open files; don't overlap ticks
+  const candidates = pm.stoppedCandidates();
+  if (candidates.length === 0) return;
+  scanning = true;
+  try {
+    pm.setDetected(await findExternalMatches(candidates));
+  } catch (err) {
+    console.error("[devhub] external-process scan failed:", (err as Error).message);
+  } finally {
+    scanning = false;
+  }
+}, DETECT_INTERVAL_MS);
 
 function shutdown() {
   console.log("\n[devhub] shutting down, stopping all projects...");

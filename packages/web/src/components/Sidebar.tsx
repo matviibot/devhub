@@ -16,6 +16,7 @@ interface Props {
   onAddServer: (projectId: string) => void;
   onEditServer: (serverId: string) => void;
   onDeleteServer: (id: string) => void;
+  onTrack: (id: string) => void;
 }
 
 export function Sidebar({
@@ -31,6 +32,7 @@ export function Sidebar({
   onAddServer,
   onEditServer,
   onDeleteServer,
+  onTrack,
 }: Props) {
   const running = servers.filter((s) => s.state.status === "running").length;
   const workspaceLabel = projects.length
@@ -122,10 +124,21 @@ export function Sidebar({
                   key={s.id}
                   label={s.name}
                   status={s.state.status}
-                  meta={s.state.port ? `:${s.state.port}` : "—"}
+                  meta={s.state.port ? `:${s.state.port}` : s.detected ? `:${s.detected.port}` : "—"}
                   selected={s.id === selectedId}
                   density="compact"
                   onClick={() => onSelect(s.id)}
+                  badge={
+                    s.detected ? (
+                      <IconButton
+                        icon="plug"
+                        label={`Track ${s.name} — already running externally`}
+                        size="sm"
+                        style={{ color: "var(--color-primary)" }}
+                        onClick={(e) => stop(e, () => onTrack(s.id))}
+                      />
+                    ) : undefined
+                  }
                   actions={
                     <>
                       <IconButton icon="pencil" label={`Edit ${s.name}`} size="sm" onClick={(e) => stop(e, () => onEditServer(s.id))} />

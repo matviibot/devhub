@@ -38,6 +38,14 @@ export interface ServerState {
   startedAt: number | null;
   exitCode: number | null;
   restartCount: number;
+  /** True while "running" backs onto a process devhub adopted rather than
+   *  spawned itself — no log capture until it's restarted under devhub. */
+  external: boolean;
+}
+
+export interface DetectedExternal {
+  pid: number;
+  port: number;
 }
 
 export interface ServerSnapshot {
@@ -50,6 +58,9 @@ export interface ServerSnapshot {
   cwd: string;
   port?: number;
   state: ServerState;
+  /** Set when stopped and something matching this server's cwd is already
+   *  listening on a port — offer to Track it rather than starting a duplicate. */
+  detected: DetectedExternal | null;
 }
 
 export interface DetectedScript {
@@ -73,7 +84,8 @@ export type ClientMessage =
   | { type: "createServer"; projectId: string; name: string; command: string; dir: string; port?: number }
   | { type: "updateServer"; id: string; name: string; command: string; dir: string; port?: number }
   | { type: "deleteServer"; id: string }
-  | { type: "detectScripts"; projectId: string; dir: string };
+  | { type: "detectScripts"; projectId: string; dir: string }
+  | { type: "track"; id: string };
 
 // ---- Daemon -> Client ----
 
