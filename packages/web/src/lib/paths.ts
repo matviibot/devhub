@@ -13,3 +13,10 @@ export function commonAncestor(paths: string[]): string {
 export function tildify(path: string): string {
   return path.replace(/^\/(Users|home)\/[^/]+/, "~");
 }
+
+/** Joins a project root with a server's relative dir, for display purposes
+ *  only (the daemon does the real, ~-expanding resolution). */
+export function joinPath(root: string, dir: string): string {
+  if (!dir || dir === ".") return root;
+  return `${root.replace(/\/$/, "")}/${dir.replace(/^\.?\//, "")}`;
+}

@@ -1,22 +1,17 @@
 {
   "projects": [
     {
-      "name": "Web app",
-      "cwd": "/Users/you/dev/my-web-app",
-      "command": "npm run dev",
-      "group": "my-app"
+      "name": "My App",
+      "root": "/Users/you/dev/my-app",
+      "servers": [
+        { "name": "web", "command": "npm run dev", "dir": "apps/web" },
+        { "name": "api", "command": "npm run dev", "dir": "services/api", "port": 8080 }
+      ]
     },
     {
-      "name": "API server",
-      "cwd": "/Users/you/dev/my-api",
-      "command": "npm run dev",
-      "group": "my-app",
-      "port": 8080
-    },
-    {
-      "name": "Docs site",
-      "cwd": "/Users/you/dev/docs",
-      "command": "npm start"
+      "name": "Docs",
+      "root": "/Users/you/dev/docs",
+      "servers": [{ "name": "docs", "command": "npm start", "dir": "." }]
     }
   ]
 }

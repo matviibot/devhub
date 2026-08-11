@@ -3,22 +3,24 @@ import { useDevhub } from "./hooks/useDevhub";
 import { useNow } from "./hooks/useNow";
 import { Sidebar } from "./components/Sidebar";
 import { LogPanel } from "./components/LogPanel";
+import { Dialogs, type DialogState } from "./components/Dialogs";
 import { Button } from "./ds";
 import { stamp } from "./lib/format";
 
 export function App() {
-  const { connected, projects, addLogListener, start, stop, restart, startGroup, stopGroup } =
-    useDevhub();
+  const devhub = useDevhub();
+  const { connected, projects, servers, error, clearError, addLogListener, start, stop, restart, startProject, stopProject } = devhub;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<DialogState>(null);
   const now = useNow();
 
   useEffect(() => {
-    if (!selectedId && projects.length > 0) setSelectedId(projects[0].id);
-  }, [projects, selectedId]);
+    if (!selectedId && servers.length > 0) setSelectedId(servers[0].id);
+  }, [servers, selectedId]);
 
-  const selected = projects.find((p) => p.id === selectedId) ?? null;
-  const count = (status: string) => projects.filter((p) => p.state.status === status).length;
-  const stopAll = () => projects.forEach((p) => stop(p.id));
+  const selected = servers.find((s) => s.id === selectedId) ?? null;
+  const count = (status: string) => servers.filter((s) => s.state.status === status).length;
+  const stopAll = () => servers.forEach((s) => stop(s.id));
 
   return (
     <div
@@ -31,9 +33,18 @@ export function App() {
         color: "var(--color-on-surface)",
         fontFamily: "var(--font-ui)",
         overflow: "hidden",
+        position: "relative",
       }}
     >
       {!connected && <div className="app__disconnected">Reconnecting to devhub daemon…</div>}
+      {error && (
+        <div className="app__error">
+          {error}
+          <button onClick={clearError} aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
 
       <div
         style={{
@@ -66,20 +77,30 @@ export function App() {
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <Sidebar
           projects={projects}
+          servers={servers}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          onStartGroup={startGroup}
-          onStopGroup={stopGroup}
+          onStartProject={startProject}
+          onStopProject={stopProject}
+          onAddProject={() => setDialog({ kind: "project", mode: "add" })}
+          onEditProject={(projectId) => setDialog({ kind: "project", mode: "edit", projectId })}
+          onDeleteProject={(id) => setDialog({ kind: "delete", target: "project", id })}
+          onAddServer={(projectId) => setDialog({ kind: "server", mode: "add", projectId })}
+          onEditServer={(serverId) => setDialog({ kind: "server", mode: "edit", serverId })}
+          onDeleteServer={(id) => setDialog({ kind: "delete", target: "server", id })}
         />
         <LogPanel
-          project={selected}
+          server={selected}
           addLogListener={addLogListener}
           onStart={start}
           onStop={stop}
           onRestart={restart}
+          onEdit={(serverId) => setDialog({ kind: "server", mode: "edit", serverId })}
           now={now}
         />
       </div>
+
+      <Dialogs dialog={dialog} onClose={() => setDialog(null)} devhub={devhub} />
     </div>
   );
 }

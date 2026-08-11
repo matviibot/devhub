@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import type { ProjectSnapshot } from "@devhub/shared";
+import type { ServerSnapshot } from "@devhub/shared";
 import { Button, EmptyState, IconButton, StatusDot } from "../ds";
 import { dur, stamp } from "../lib/format";
 import { tildify } from "../lib/paths";
@@ -15,39 +15,40 @@ interface LineEntry {
   text: string;
   ts: number | null; // null = arrived before we subscribed (backlog) — real time unknown
 }
-interface ProjectLogState {
+interface ServerLogState {
   lines: LineEntry[];
   paused: boolean;
   queued: LineEntry[];
 }
 
 interface Props {
-  project: ProjectSnapshot | null;
+  server: ServerSnapshot | null;
   addLogListener: (id: string, listener: (lines: string[], isBacklog: boolean) => void) => () => void;
   onStart: (id: string) => void;
   onStop: (id: string) => void;
   onRestart: (id: string) => void;
+  onEdit: (id: string) => void;
   now: number;
 }
 
-export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, now }: Props) {
+export function LogPanel({ server, addLogListener, onStart, onStop, onRestart, onEdit, now }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const wrapRef = useRef(false);
   const timestampsRef = useRef(true);
-  const perProjectRef = useRef<Map<string, ProjectLogState>>(new Map());
+  const perServerRef = useRef<Map<string, ServerLogState>>(new Map());
 
   const [timestamps, setTimestamps] = useState(true);
   const [wrap, setWrap] = useState(false);
   const [paused, setPaused] = useState(false);
   const [lineCount, setLineCount] = useState(0);
 
-  function getState(id: string): ProjectLogState {
-    let s = perProjectRef.current.get(id);
+  function getState(id: string): ServerLogState {
+    let s = perServerRef.current.get(id);
     if (!s) {
       s = { lines: [], paused: false, queued: [] };
-      perProjectRef.current.set(id, s);
+      perServerRef.current.set(id, s);
     }
     return s;
   }
@@ -58,7 +59,7 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
     return `${DIM}${gutter}${RESET}  ${l.text}`;
   }
 
-  function renderState(state: ProjectLogState) {
+  function renderState(state: ServerLogState) {
     const term = termRef.current;
     if (!term) return;
     term.clear();
@@ -75,8 +76,8 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
   }
 
   // Terminal instance lives for the component's lifetime; content is swapped
-  // per-project (see the subscribe effect below). Always mounted (even with
-  // no project selected) so this effect has a real DOM node on first render.
+  // per-server (see the subscribe effect below). Always mounted (even with
+  // no server selected) so this effect has a real DOM node on first render.
   useEffect(() => {
     const term = new Terminal({
       convertEol: true,
@@ -109,18 +110,22 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
 
   useEffect(() => {
     timestampsRef.current = timestamps;
-    if (project) renderState(getState(project.id));
+    if (server) renderState(getState(server.id));
   }, [timestamps]);
 
-  // Subscribe to the selected project's log stream; each project keeps its
+  // Subscribe to the selected server's log stream; each server keeps its
   // own buffer (capped) so switching back and forth doesn't lose scrollback.
   useEffect(() => {
-    if (!project) return;
-    const state = getState(project.id);
+    if (!server) {
+      termRef.current?.clear();
+      setLineCount(0);
+      return;
+    }
+    const state = getState(server.id);
     setPaused(state.paused);
     renderState(state);
 
-    return addLogListener(project.id, (rawLines, isBacklog) => {
+    return addLogListener(server.id, (rawLines, isBacklog) => {
       const entries: LineEntry[] = rawLines.map((text) => ({ text, ts: isBacklog ? null : Date.now() }));
       if (isBacklog) {
         state.lines = entries.slice(-MAX_BUFFERED_LINES);
@@ -137,11 +142,11 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
       const term = termRef.current;
       if (term) for (const e of entries) term.writeln(formatLine(e, timestampsRef.current));
     });
-  }, [project?.id, addLogListener]);
+  }, [server?.id, addLogListener]);
 
   function togglePaused() {
-    if (!project) return;
-    const state = getState(project.id);
+    if (!server) return;
+    const state = getState(server.id);
     state.paused = !state.paused;
     setPaused(state.paused);
     if (!state.paused && state.queued.length) {
@@ -153,14 +158,14 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
   }
 
   function clearLog() {
-    if (!project) return;
-    const state = getState(project.id);
+    if (!server) return;
+    const state = getState(server.id);
     state.lines = [];
     state.queued = [];
     renderState(state);
   }
 
-  const state = project?.state;
+  const state = server?.state;
   const startDisabled = !state || state.status === "running" || state.status === "starting";
   const stopDisabled = !state || state.status === "stopped";
 
@@ -179,10 +184,10 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
           boxShadow: "inset 0 -1px 0 var(--material-hairline)",
         }}
       >
-        {project && state ? (
+        {server && state ? (
           <>
             <StatusDot status={state.status} size={9} ring />
-            <span style={{ font: "600 14px/1 var(--font-ui)", color: "var(--color-on-surface)", flex: "0 0 auto" }}>{project.name}</span>
+            <span style={{ font: "600 14px/1 var(--font-ui)", color: "var(--color-on-surface)", flex: "0 0 auto" }}>{server.name}</span>
             <span
               style={{
                 font: "400 11px/1 var(--font-mono)",
@@ -194,7 +199,7 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
                 flex: 1,
               }}
             >
-              {tildify(project.cwd)}
+              {tildify(server.cwd)}
             </span>
             {state.port && (
               <a
@@ -219,23 +224,24 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
               </a>
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 6, flex: "0 0 auto" }}>
-              <Button variant="primary" size="sm" icon="play" disabled={startDisabled} onClick={() => onStart(project.id)}>
+              <IconButton icon="pencil" label="Edit server" size="sm" onClick={() => onEdit(server.id)} />
+              <Button variant="primary" size="sm" icon="play" disabled={startDisabled} onClick={() => onStart(server.id)}>
                 Start
               </Button>
-              <Button variant="secondary" size="sm" icon="rotate-cw" disabled={stopDisabled} onClick={() => onRestart(project.id)}>
+              <Button variant="secondary" size="sm" icon="rotate-cw" disabled={stopDisabled} onClick={() => onRestart(server.id)}>
                 Restart
               </Button>
-              <Button variant="secondary" size="sm" icon="square" disabled={stopDisabled} onClick={() => onStop(project.id)}>
+              <Button variant="secondary" size="sm" icon="square" disabled={stopDisabled} onClick={() => onStop(server.id)}>
                 Stop
               </Button>
             </div>
           </>
         ) : (
-          <span style={{ font: "400 12px/1 var(--font-ui)", color: "var(--color-on-surface-variant)" }}>Select a project to view its logs</span>
+          <span style={{ font: "400 12px/1 var(--font-ui)", color: "var(--color-on-surface-variant)" }}>Select a server to view its logs</span>
         )}
       </div>
 
-      {project && state && (
+      {server && state && (
         <div
           style={{
             flex: "0 0 auto",
@@ -252,7 +258,7 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
           }}
         >
           <span style={{ color: "var(--color-on-surface)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {project.command}
+            {server.command}
           </span>
           <span style={{ color: "var(--color-outline)", padding: "0 8px" }}>·</span>
           <span>{state.pid ? `pid ${state.pid}` : "pid —"}</span>
@@ -272,18 +278,24 @@ export function LogPanel({ project, addLogListener, onStart, onStop, onRestart, 
 
       <div style={{ flex: 1, minHeight: 0, position: "relative", background: "var(--color-surface-container-lowest)" }}>
         <div style={{ position: "absolute", inset: 0, padding: "8px 0" }} ref={containerRef} />
-        {project && lineCount === 0 && (
+        {lineCount === 0 && (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
             <EmptyState
-              icon="terminal"
-              title="Output cleared"
-              description={state?.status === "running" ? "New lines appear as the process writes them." : "Start the process to stream its output."}
+              icon={server ? "terminal" : "folder-plus"}
+              title={server ? "Output cleared" : "No server selected"}
+              description={
+                server
+                  ? state?.status === "running"
+                    ? "New lines appear as the process writes them."
+                    : "Start the process to stream its output."
+                  : "Add a project in the sidebar, then add servers to it."
+              }
             />
           </div>
         )}
       </div>
 
-      {project && (
+      {server && (
         <div
           style={{
             flex: "0 0 auto",

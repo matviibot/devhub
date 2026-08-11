@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
-import type { ProjectConfig, ProjectSnapshot, ProjectState } from "@devhub/shared";
+import type { ServerSnapshot, ServerState } from "@devhub/shared";
 
 const LOG_BUFFER_LINES = 2000;
 const KILL_GRACE_MS = 5000;
@@ -34,9 +34,22 @@ function collapseBlankRuns(newLines: string[], lastStored: string | undefined): 
   return out;
 }
 
+/** A server config flattened out of its parent project, with an
+ *  already-resolved absolute working directory. Daemon-internal — the
+ *  wire-facing shape is @devhub/shared's ServerSnapshot. */
+export interface RuntimeServerConfig {
+  id: string;
+  projectId: string;
+  name: string;
+  command: string;
+  dir: string;
+  cwd: string;
+  port?: number;
+}
+
 interface Runtime {
-  config: ProjectConfig;
-  state: ProjectState;
+  config: RuntimeServerConfig;
+  state: ServerState;
   logs: string[];
   lineBuffer: string;
   pty: IPty | null;
@@ -45,7 +58,7 @@ interface Runtime {
 }
 
 export declare interface ProcessManager {
-  on(event: "update", listener: (snapshot: ProjectSnapshot) => void): this;
+  on(event: "update", listener: (snapshot: ServerSnapshot) => void): this;
   on(event: "removed", listener: (id: string) => void): this;
   on(event: "log", listener: (id: string, lines: string[]) => void): this;
 }
@@ -53,12 +66,12 @@ export declare interface ProcessManager {
 export class ProcessManager extends EventEmitter {
   private runtimes = new Map<string, Runtime>();
 
-  constructor(projects: ProjectConfig[]) {
+  constructor(servers: RuntimeServerConfig[]) {
     super();
-    for (const config of projects) this.runtimes.set(config.id, this.freshRuntime(config));
+    for (const config of servers) this.runtimes.set(config.id, this.freshRuntime(config));
   }
 
-  private freshRuntime(config: ProjectConfig): Runtime {
+  private freshRuntime(config: RuntimeServerConfig): Runtime {
     return {
       config,
       state: {
@@ -78,12 +91,12 @@ export class ProcessManager extends EventEmitter {
     };
   }
 
-  snapshot(id: string): ProjectSnapshot | null {
+  snapshot(id: string): ServerSnapshot | null {
     const rt = this.runtimes.get(id);
     return rt ? { ...rt.config, state: rt.state } : null;
   }
 
-  allSnapshots(): ProjectSnapshot[] {
+  allSnapshots(): ServerSnapshot[] {
     return [...this.runtimes.values()].map((rt) => ({ ...rt.config, state: rt.state }));
   }
 
@@ -91,9 +104,18 @@ export class ProcessManager extends EventEmitter {
     return this.runtimes.get(id)?.logs ?? [];
   }
 
-  /** Reconciles running state with a freshly reloaded config file. */
-  applyConfig(projects: ProjectConfig[]) {
-    const nextIds = new Set(projects.map((p) => p.id));
+  /** Injects a synthetic log line (daemon-originated notices, not process output). */
+  logNote(id: string, text: string) {
+    const rt = this.runtimes.get(id);
+    if (!rt) return;
+    rt.logs.push(text);
+    if (rt.logs.length > LOG_BUFFER_LINES) rt.logs.splice(0, rt.logs.length - LOG_BUFFER_LINES);
+    this.emit("log", id, [text]);
+  }
+
+  /** Reconciles running state with a freshly reloaded/edited config. */
+  applyConfig(servers: RuntimeServerConfig[]) {
+    const nextIds = new Set(servers.map((s) => s.id));
 
     for (const id of [...this.runtimes.keys()]) {
       if (!nextIds.has(id)) {
@@ -103,7 +125,7 @@ export class ProcessManager extends EventEmitter {
       }
     }
 
-    for (const config of projects) {
+    for (const config of servers) {
       const existing = this.runtimes.get(config.id);
       if (!existing) {
         this.runtimes.set(config.id, this.freshRuntime(config));
@@ -177,12 +199,12 @@ export class ProcessManager extends EventEmitter {
     this.stop(id);
   }
 
-  startGroup(group: string) {
-    for (const rt of this.runtimes.values()) if (rt.config.group === group) this.start(rt.config.id);
+  startProject(projectId: string) {
+    for (const rt of this.runtimes.values()) if (rt.config.projectId === projectId) this.start(rt.config.id);
   }
 
-  stopGroup(group: string) {
-    for (const rt of this.runtimes.values()) if (rt.config.group === group) this.stop(rt.config.id);
+  stopProject(projectId: string) {
+    for (const rt of this.runtimes.values()) if (rt.config.projectId === projectId) this.stop(rt.config.id);
   }
 
   private handleData(id: string, chunk: string) {

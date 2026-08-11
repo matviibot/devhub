@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClientMessage, ProjectSnapshot, ServerMessage } from "@devhub/shared";
+import type { ClientMessage, DetectedScript, ProjectMeta, ServerMessage, ServerSnapshot } from "@devhub/shared";
 
 const RECONNECT_DELAY_MS = 1500;
 
 type LogListener = (lines: string[], isBacklog: boolean) => void;
 
+interface Detected {
+  projectId: string;
+  dir: string;
+  scripts: DetectedScript[];
+  hasPackageJson: boolean;
+}
+
 export function useDevhub() {
   const [connected, setConnected] = useState(false);
-  const [projects, setProjects] = useState<ProjectSnapshot[]>([]);
+  const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [servers, setServers] = useState<ServerSnapshot[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [detected, setDetected] = useState<Detected | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedRef = useRef<Set<string>>(new Set());
   // Log lines are pushed straight to xterm.js by listeners rather than kept
@@ -35,18 +45,19 @@ export function useDevhub() {
         switch (msg.type) {
           case "snapshot":
             setProjects(msg.projects);
+            setServers(msg.servers);
             break;
-          case "projectUpdated":
-            setProjects((prev) => {
-              const idx = prev.findIndex((p) => p.id === msg.project.id);
-              if (idx === -1) return [...prev, msg.project];
+          case "serverUpdated":
+            setServers((prev) => {
+              const idx = prev.findIndex((s) => s.id === msg.server.id);
+              if (idx === -1) return [...prev, msg.server];
               const next = [...prev];
-              next[idx] = msg.project;
+              next[idx] = msg.server;
               return next;
             });
             break;
-          case "projectRemoved":
-            setProjects((prev) => prev.filter((p) => p.id !== msg.id));
+          case "serverRemoved":
+            setServers((prev) => prev.filter((s) => s.id !== msg.id));
             break;
           case "logBacklog":
             for (const listener of logListenersRef.current.get(msg.id) ?? []) {
@@ -57,6 +68,12 @@ export function useDevhub() {
             for (const listener of logListenersRef.current.get(msg.id) ?? []) {
               listener(msg.lines, false);
             }
+            break;
+          case "scriptsDetected":
+            setDetected({ projectId: msg.projectId, dir: msg.dir, scripts: msg.scripts, hasPackageJson: msg.hasPackageJson });
+            break;
+          case "commandError":
+            setError(msg.message);
             break;
         }
       };
@@ -90,7 +107,7 @@ export function useDevhub() {
     [send],
   );
 
-  /** Registers a listener for a project's log lines; returns an unsubscribe fn. */
+  /** Registers a listener for a server's log lines; returns an unsubscribe fn. */
   const addLogListener = useCallback(
     (id: string, listener: LogListener) => {
       if (!logListenersRef.current.has(id)) logListenersRef.current.set(id, new Set());
@@ -106,11 +123,24 @@ export function useDevhub() {
   return {
     connected,
     projects,
+    servers,
+    error,
+    clearError: () => setError(null),
+    detected,
     addLogListener,
     start: (id: string) => send({ type: "start", id }),
     stop: (id: string) => send({ type: "stop", id }),
     restart: (id: string) => send({ type: "restart", id }),
-    startGroup: (group: string) => send({ type: "startGroup", group }),
-    stopGroup: (group: string) => send({ type: "stopGroup", group }),
+    startProject: (projectId: string) => send({ type: "startProject", projectId }),
+    stopProject: (projectId: string) => send({ type: "stopProject", projectId }),
+    createProject: (name: string, root: string) => send({ type: "createProject", name, root }),
+    updateProject: (id: string, name: string, root: string) => send({ type: "updateProject", id, name, root }),
+    deleteProject: (id: string) => send({ type: "deleteProject", id }),
+    createServer: (projectId: string, name: string, command: string, dir: string, port?: number) =>
+      send({ type: "createServer", projectId, name, command, dir, port }),
+    updateServer: (id: string, name: string, command: string, dir: string, port?: number) =>
+      send({ type: "updateServer", id, name, command, dir, port }),
+    deleteServer: (id: string) => send({ type: "deleteServer", id }),
+    detectScripts: (projectId: string, dir: string) => send({ type: "detectScripts", projectId, dir }),
   };
 }

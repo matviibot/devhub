@@ -5,3 +5,5 @@ export { StatusDot, STATUS_ROLES } from "./StatusDot";
 export { GroupHeader } from "./GroupHeader";
 export { SidebarRow } from "./SidebarRow";
 export { EmptyState } from "./EmptyState";
+export { Dialog } from "./Dialog";
+export { TextField } from "./TextField";
