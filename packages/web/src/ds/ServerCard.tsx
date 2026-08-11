@@ -32,6 +32,10 @@ export interface ServerCardData {
   showTrack?: boolean;
   showRestart?: boolean;
   showStop?: boolean;
+  /** Start/stop/restart was just clicked and hasn't been confirmed by the
+   *  daemon yet — shows a spinner on the action button instead of leaving
+   *  it looking inert while the request is in flight. */
+  pending?: boolean;
   /** Renders the "Add ▾" project-picker menu — discovered suggestions only. */
   showAddMenu?: boolean;
   showIgnore?: boolean;
@@ -237,7 +241,7 @@ export function ServerCard({
 
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         {card.showStart && (
-          <Button variant="primary" size="sm" icon="play" onClick={stop(onStart)}>
+          <Button variant="primary" size="sm" icon="play" loading={card.pending} onClick={stop(onStart)}>
             Start
           </Button>
         )}
@@ -247,12 +251,12 @@ export function ServerCard({
           </Button>
         )}
         {card.showRestart && (
-          <Button variant="secondary" size="sm" icon="rotate-cw" onClick={stop(onRestart)}>
+          <Button variant="secondary" size="sm" icon="rotate-cw" loading={card.pending} onClick={stop(onRestart)}>
             Restart
           </Button>
         )}
         {card.showStop && (
-          <Button variant="secondary" size="sm" icon="square" onClick={stop(onStop)}>
+          <Button variant="secondary" size="sm" icon="square" loading={card.pending} onClick={stop(onStop)}>
             Stop
           </Button>
         )}

@@ -2,7 +2,7 @@ import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { ClientMessage, DiscoveredProject, ServerMessage, UiState } from "@devhub/shared";
-import { detectScripts, resolveCwd } from "./config.js";
+import { detectScripts, listDirectory, resolveCwd } from "./config.js";
 import type { ProcessManager } from "./processManager.js";
 import type { ProjectStore } from "./projectStore.js";
 import { serveStatic } from "./staticServer.js";
@@ -149,6 +149,11 @@ export function createServer(pm: ProcessManager, store: ProjectStore, initialUiS
             store.reorderServers(msg.projectId, msg.ids);
             resync();
             break;
+          case "listDirectory": {
+            const result = listDirectory(msg.path);
+            send(ws, { type: "directoryListing", ...result });
+            break;
+          }
         }
       } catch (err) {
         send(ws, { type: "commandError", message: (err as Error).message });

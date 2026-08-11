@@ -9,6 +9,7 @@ interface Props {
   servers: ServerSnapshot[];
   discovered: DiscoveredProject[];
   openServerId: string | null;
+  pendingServerActions: Set<string>;
   now: number;
   uiState: UiState;
   onSetUiState: (state: UiState) => void;
@@ -49,7 +50,7 @@ function discoveryKey(d: DiscoveredProject): string {
   return d.kind === "docker" ? d.container : d.cwd;
 }
 
-function serverCard(s: ServerSnapshot, now: number, active: boolean): ServerCardData {
+function serverCard(s: ServerSnapshot, now: number, active: boolean, pending: boolean): ServerCardData {
   const { state } = s;
   const port = state.port ?? s.detected?.port;
   const plural = (n: number) => (n === 1 ? "restart" : "restarts");
@@ -75,6 +76,7 @@ function serverCard(s: ServerSnapshot, now: number, active: boolean): ServerCard
     showStart: !s.detected && state.status !== "running" && state.status !== "starting",
     showRestart: !s.detected && (state.status === "running" || state.status === "starting"),
     showStop: !s.detected && (state.status === "running" || state.status === "starting"),
+    pending,
   };
 }
 
@@ -218,6 +220,7 @@ export function Dashboard({
   servers,
   discovered,
   openServerId,
+  pendingServerActions,
   now,
   uiState,
   onSetUiState,
@@ -339,7 +342,7 @@ export function Dashboard({
                 {items.map((s) => (
                   <ServerCard
                     key={s.id}
-                    card={serverCard(s, now, s.id === openServerId)}
+                    card={serverCard(s, now, s.id === openServerId, pendingServerActions.has(s.id))}
                     onOpen={() => onOpen(s.id)}
                     onEdit={() => onEditServer(s.id)}
                     onDelete={() => onDeleteServer(s.id)}

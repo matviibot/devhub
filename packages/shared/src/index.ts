@@ -124,6 +124,12 @@ export interface UiState {
   collapsedGroups: string[];
 }
 
+/** A subdirectory entry surfaced by the daemon's folder browser — the
+ *  daemon has real filesystem access, the browser sandbox doesn't. */
+export interface DirectoryEntry {
+  name: string;
+}
+
 // ---- Client -> Daemon ----
 
 export type ClientMessage =
@@ -146,7 +152,8 @@ export type ClientMessage =
   | { type: "track"; id: string }
   | { type: "setUiState"; state: UiState }
   | { type: "reorderProjects"; ids: string[] }
-  | { type: "reorderServers"; projectId: string; ids: string[] };
+  | { type: "reorderServers"; projectId: string; ids: string[] }
+  | { type: "listDirectory"; path?: string };
 
 // ---- Daemon -> Client ----
 
@@ -159,4 +166,5 @@ export type ServerMessage =
   | { type: "scriptsDetected"; cwd: string; scripts: DetectedScript[]; hasPackageJson: boolean }
   | { type: "discovered"; items: DiscoveredProject[] }
   | { type: "uiState"; state: UiState }
-  | { type: "commandError"; message: string };
+  | { type: "commandError"; message: string }
+  | { type: "directoryListing"; path: string; parent: string | null; entries: DirectoryEntry[]; error?: string };

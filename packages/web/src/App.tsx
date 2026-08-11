@@ -25,6 +25,7 @@ export function App() {
     error,
     clearError,
     addLogListener,
+    pendingServerActions,
     start,
     stop,
     restart,
@@ -170,6 +171,7 @@ export function App() {
           servers={servers}
           discovered={discovered}
           openServerId={openServerId}
+          pendingServerActions={pendingServerActions}
           now={now}
           uiState={uiState}
           onSetUiState={setUiState}

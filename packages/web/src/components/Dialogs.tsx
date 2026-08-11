@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Dialog, Icon, IconButton, TextField } from "../ds";
+import { Button, Dialog, FolderBrowser, Icon, IconButton, TextField } from "../ds";
 import type { useDevhub, ServerInput } from "../hooks/useDevhub";
+import { tildify } from "../lib/paths";
 
 type Devhub = ReturnType<typeof useDevhub>;
 
@@ -57,8 +58,20 @@ interface Props {
 const DETECT_DEBOUNCE_MS = 300;
 
 export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted }: Props) {
-  const { projects, servers, createProject, updateProject, deleteProject, createServer, updateServer, deleteServer, detectScripts, detected } =
-    devhub;
+  const {
+    projects,
+    servers,
+    createProject,
+    updateProject,
+    deleteProject,
+    createServer,
+    updateServer,
+    deleteServer,
+    detectScripts,
+    detected,
+    listDirectory,
+    directoryListing,
+  } = devhub;
 
   const [name, setName] = useState("");
   const [serverKind, setServerKind] = useState<"process" | "docker">("process");
@@ -66,6 +79,7 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
   const [cwd, setCwd] = useState("");
   const [container, setContainer] = useState("");
   const [port, setPort] = useState("");
+  const [browsing, setBrowsing] = useState(false);
   const detectTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const dialogKey = dialog
@@ -80,6 +94,7 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
   const project = projectId ? projects.find((p) => p.id === projectId) : undefined;
 
   useEffect(() => {
+    setBrowsing(false);
     if (!dialog) return;
     if (dialog.kind === "project") {
       const p = dialog.mode === "edit" ? projects.find((x) => x.id === dialog.projectId) : null;
@@ -115,8 +130,9 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
-      } else if (e.key === "Enter" && !(e as unknown as { isComposing?: boolean }).isComposing) {
+        if (browsing) setBrowsing(false);
+        else onClose();
+      } else if (e.key === "Enter" && !browsing && !(e as unknown as { isComposing?: boolean }).isComposing) {
         const active = document.activeElement;
         if (active instanceof HTMLInputElement) {
           e.preventDefault();
@@ -126,7 +142,7 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dialog, name, serverKind, command, cwd, container, port]);
+  }, [dialog, name, serverKind, command, cwd, container, port, browsing]);
 
   if (!dialog) return null;
 
@@ -218,6 +234,7 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
     const editing = dialog.mode === "edit";
     const disabled = !name.trim() || (serverKind === "docker" ? !container.trim() : !command.trim() || !cwd.trim());
     return (
+      <>
       <Dialog
         icon={editing ? "settings-2" : "circle-plus"}
         title={`${editing ? "Edit server" : "New server"}${project ? ` · ${project.name}` : ""}`}
@@ -274,7 +291,12 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
             <TextField id="dh-s-container" label="Container" value={container} onChange={setContainer} placeholder="container name or id" mono />
           ) : (
             <>
-              <TextField id="dh-s-cwd" label="Working directory" value={cwd} onChange={setCwd} placeholder="~/code/storefront/apps/web" mono />
+              <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <TextField id="dh-s-cwd" label="Working directory" value={cwd} onChange={setCwd} placeholder="~/code/storefront/apps/web" mono />
+                </div>
+                <IconButton icon="folder-open" label="Browse for folder" onClick={() => setBrowsing(true)} />
+              </div>
               <TextField id="dh-s-cmd" label="Command" value={command} onChange={setCommand} placeholder="npm run dev" mono />
 
               <div
@@ -331,6 +353,19 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
           )}
         </div>
       </Dialog>
+      {browsing && (
+        <FolderBrowser
+          initialPath={cwd.trim() || undefined}
+          listing={directoryListing}
+          onNavigate={listDirectory}
+          onSelect={(path) => {
+            setCwd(tildify(path));
+            setBrowsing(false);
+          }}
+          onClose={() => setBrowsing(false)}
+        />
+      )}
+      </>
     );
   }
 

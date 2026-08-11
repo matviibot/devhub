@@ -1,9 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import chokidar from "chokidar";
-import type { DetectedScript, ProjectConfig, ServerConfig } from "@devhub/shared";
+import type { DetectedScript, DirectoryEntry, ProjectConfig, ServerConfig } from "@devhub/shared";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -142,6 +142,28 @@ export function writeConfig(projects: ProjectConfig[], path: string = CONFIG_PAT
     })),
   };
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+}
+
+/** Lists the subdirectories of a resolved absolute (or ~-relative) path, for
+ *  the web UI's folder-browser dialog — browsers can't expose real OS paths,
+ *  but the daemon runs on the user's own machine and can just `readdir`.
+ *  Defaults to $HOME when no path is given. Dotfiles are hidden to match
+ *  typical OS folder pickers; files are omitted since only a directory can
+ *  ever be selected as a server's cwd. */
+export function listDirectory(rawPath?: string): { path: string; parent: string | null; entries: DirectoryEntry[]; error?: string } {
+  const path = rawPath?.trim() ? resolve(expandHome(rawPath.trim())) : homedir();
+  let entries: DirectoryEntry[] = [];
+  let error: string | undefined;
+  try {
+    entries = readdirSync(path, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .map((e) => ({ name: e.name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err) {
+    error = (err as Error).message;
+  }
+  const up = dirname(path);
+  return { path, parent: up === path ? null : up, entries, error };
 }
 
 export function watchConfig(
