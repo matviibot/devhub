@@ -131,6 +131,55 @@ function CardGrid({ children, style }: { children: ReactNode; style?: CSSPropert
   return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(252px, 1fr))", gap: 10, ...style }}>{children}</div>;
 }
 
+function matches(query: string, ...fields: (string | number | undefined | null)[]): boolean {
+  if (!query) return true;
+  return fields.some((f) => f != null && String(f).toLowerCase().includes(query));
+}
+
+function serverMatches(s: ServerSnapshot, query: string): boolean {
+  return matches(query, s.name, s.command, s.cwd, s.state.port, s.detected?.port);
+}
+
+function discoveredMatches(d: DiscoveredProject, query: string): boolean {
+  return matches(query, d.suggestedName, d.cwd, d.port);
+}
+
+function SearchField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        width: 220,
+        height: 24,
+        padding: "0 6px 0 8px",
+        borderRadius: "var(--radius-sm)",
+        background: "var(--color-surface-container-lowest)",
+        boxShadow: "var(--inset-hairline)",
+      }}
+    >
+      <Icon name="search" size={12} color="var(--color-outline)" />
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Filter…"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: "100%",
+          border: "none",
+          outline: "none",
+          background: "transparent",
+          color: "var(--color-on-surface)",
+          font: "400 12px/1 var(--font-ui)",
+        }}
+      />
+      {value && <IconButton icon="x" label="Clear filter" size="sm" onClick={() => onChange("")} />}
+    </div>
+  );
+}
+
 export function Dashboard({
   projects,
   servers,
@@ -155,6 +204,9 @@ export function Dashboard({
   onQuickAdd,
   onQuickAddToProject,
 }: Props) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+
   const ignored = new Set(uiState.ignoredDiscovered);
   const collapsed = new Set(uiState.collapsedGroups);
 
@@ -164,14 +216,23 @@ export function Dashboard({
     else next.add(key);
     onSetUiState({ ...uiState, collapsedGroups: [...next] });
   };
+  // While a filter is active, every rendered group necessarily has a match
+  // (non-matching groups are filtered out entirely below) — force it open
+  // without touching the persisted collapse state, so clearing the filter
+  // restores exactly what was collapsed before.
+  const isGroupCollapsed = (key: string) => (q ? false : collapsed.has(key));
   const ignore = (key: string) => onSetUiState({ ...uiState, ignoredDiscovered: [...new Set(uiState.ignoredDiscovered).add(key)] });
   const unignore = (key: string) => onSetUiState({ ...uiState, ignoredDiscovered: uiState.ignoredDiscovered.filter((k) => k !== key) });
 
   const workspaceLabel = projects.length
     ? `${projects.length} ${projects.length === 1 ? "project" : "projects"} · ${servers.length} servers`
     : "no projects";
-  const visibleDiscovered = discovered.filter((d) => !ignored.has(d.cwd));
-  const ignoredList = discovered.filter((d) => ignored.has(d.cwd));
+  const visibleDiscovered = discovered.filter((d) => !ignored.has(d.cwd) && discoveredMatches(d, q));
+  const ignoredList = discovered.filter((d) => ignored.has(d.cwd) && discoveredMatches(d, q));
+  const anyProjectMatches = projects.some(
+    (p) => matches(q, p.name) || servers.some((s) => s.projectId === p.id && serverMatches(s, q)),
+  );
+  const noMatches = !!q && !anyProjectMatches && visibleDiscovered.length === 0 && ignoredList.length === 0;
 
   return (
     <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "0 16px 40px" }}>
@@ -181,15 +242,19 @@ export function Dashboard({
           {workspaceLabel}
         </span>
         <span style={{ flex: 1 }} />
+        <SearchField value={query} onChange={setQuery} />
         <Button variant="ghost" size="sm" icon="folder-plus" onClick={onAddProject}>
           Add project
         </Button>
       </div>
 
       {projects.map((p) => {
-        const items = servers.filter((s) => s.projectId === p.id);
+        const projectItems = servers.filter((s) => s.projectId === p.id);
+        const nameMatches = matches(q, p.name);
+        const items = !q || nameMatches ? projectItems : projectItems.filter((s) => serverMatches(s, q));
+        if (q && !nameMatches && items.length === 0) return null;
         const key = `project:${p.id}`;
-        const isCollapsed = collapsed.has(key);
+        const isCollapsed = isGroupCollapsed(key);
         return (
           <div key={p.id} style={{ marginBottom: 18 }}>
             <GroupHeader
@@ -236,10 +301,10 @@ export function Dashboard({
             label="Discovered"
             count={visibleDiscovered.length}
             sticky
-            collapsed={collapsed.has("section:discovered")}
+            collapsed={isGroupCollapsed("section:discovered")}
             onToggle={() => toggle("section:discovered")}
           />
-          {!collapsed.has("section:discovered") && (
+          {!isGroupCollapsed("section:discovered") && (
             <>
               <div
                 style={{
@@ -276,10 +341,10 @@ export function Dashboard({
             label="Ignored"
             count={ignoredList.length}
             sticky
-            collapsed={collapsed.has("section:ignored")}
+            collapsed={isGroupCollapsed("section:ignored")}
             onToggle={() => toggle("section:ignored")}
           />
-          {!collapsed.has("section:ignored") && (
+          {!isGroupCollapsed("section:ignored") && (
             <CardGrid style={{ marginTop: 6 }}>
               {ignoredList.map((d) => (
                 <ServerCard
@@ -293,7 +358,9 @@ export function Dashboard({
         </div>
       )}
 
-      {projects.length === 0 && discovered.length === 0 && (
+      {noMatches && <EmptyState icon="search" title="No matches" description={`Nothing matches "${query.trim()}".`} style={{ padding: "60px 12px 0" }} />}
+
+      {!q && projects.length === 0 && discovered.length === 0 && (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: "60px 12px 0" }}>
           <EmptyState icon="folder-plus" title="No projects" description="Add a repo folder to start managing its dev servers." />
           <Button variant="primary" size="sm" icon="plus" onClick={onAddProject}>
