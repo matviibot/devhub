@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import type { ServerSnapshot, ServerState } from "@devhub/shared";
-import { Button, EmptyState, Icon, IconButton, StatusDot } from "../ds";
+import { Button, EmptyState, Icon, IconButton } from "../ds";
 import { dur, stamp } from "../lib/format";
 import { tildify } from "../lib/paths";
 
@@ -12,12 +12,11 @@ const DIM = "\x1b[90m";
 const RESET = "\x1b[0m";
 
 function emptyStateProps(state: ServerState | undefined) {
-  if (!state) return { icon: "terminal", title: "Output cleared", description: "Start the process to stream its output." };
+  if (!state) return { title: "Output cleared", description: "Start the process to stream its output." };
   if (state.external) {
-    return { icon: "plug", title: "Running outside devhub", description: "No output captured yet — Restart to begin streaming its output." };
+    return { title: "Running outside devhub", description: "No output captured yet — Restart to begin streaming its output." };
   }
   return {
-    icon: "terminal",
     title: "Output cleared",
     description: state.status === "running" ? "New lines appear as the process writes them." : "Start the process to stream its output.",
   };
@@ -40,10 +39,12 @@ interface Props {
   onStop: (id: string) => void;
   onRestart: (id: string) => void;
   now: number;
+  compact: boolean;
+  medium: boolean;
 }
 
 /** Slide-over drawer showing one server's live output via xterm.js. */
-export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, now }: Props) {
+export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, now, compact, medium }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -109,7 +110,9 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
       fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
       fontSize: 12,
       lineHeight: 1.5,
-      theme: { background: "#131416" },
+      // brightBlack backs the DIM-wrapped timestamp gutter (ANSI 90);
+      // foreground is the mockup's exact log-message color.
+      theme: { background: "#100f17", foreground: "#b5b0c8", brightBlack: "#565169" },
       disableStdin: true,
       scrollback: MAX_BUFFERED_LINES,
     });
@@ -213,69 +216,73 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
           top: 0,
           right: 0,
           bottom: 0,
-          width: 520,
-          minWidth: 360,
+          left: compact ? 0 : "auto",
+          width: compact ? "100%" : medium ? 440 : 540,
+          maxWidth: "100%",
           minHeight: 0,
           zIndex: 41,
           display: "flex",
           flexDirection: "column",
-          background: "var(--color-surface-container-low)",
-          boxShadow: "inset 1px 0 0 var(--material-hairline), var(--elevation-4)",
+          background: "var(--dh-bg-rail)",
+          borderLeft: "1px solid var(--dh-border-control)",
           animation: "dh-drawer-in var(--duration-normal) var(--ease-out)",
         }}
       >
       <div
         style={{
           flex: "0 0 auto",
-          height: "var(--toolbar-height)",
+          padding: "20px 22px",
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          padding: "0 8px 0 12px",
-          background: "var(--material-regular)",
-          backdropFilter: "saturate(180%) blur(var(--material-blur))",
-          boxShadow: "inset 0 -1px 0 var(--material-hairline)",
+          gap: 12,
+          borderBottom: "1px solid var(--dh-border-hairline)",
         }}
       >
-        <StatusDot status={state.status} size={9} ring />
-        <span
-          style={{
-            flex: 1,
-            minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            font: "600 14px/1 var(--font-ui)",
-            letterSpacing: "-0.1px",
-            color: "var(--color-on-surface)",
-          }}
-        >
-          {server.name}
-        </span>
-        {state.port && (
-          <a
-            href={`http://localhost:${state.port}`}
-            target="_blank"
-            rel="noreferrer"
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+          <span
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              height: 24,
-              padding: "0 8px",
-              flex: "0 0 auto",
-              borderRadius: "var(--radius-sm)",
-              font: "400 12px/1 var(--font-mono)",
-              boxShadow: "var(--inset-hairline)",
-              color: "var(--link-color)",
-              textDecoration: "none",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              font: "500 15px/1 var(--font-ui)",
+              color: "var(--dh-text)",
             }}
           >
-            <span>localhost:{state.port}</span>
-            <Icon name="external-link" size={13} />
-          </a>
-        )}
-        <IconButton icon="x" label="Close log stream" size="sm" onClick={onClose} />
+            {server.name}
+          </span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", font: "400 11px/1 var(--font-mono)", color: "var(--dh-text-host)" }}>
+            {state.port ? `localhost:${state.port}` : server.kind === "docker" ? server.container : tildify(server.cwd)}
+          </span>
+        </div>
+        <button
+          type="button"
+          aria-label="Close log stream"
+          title="Close log stream"
+          onClick={onClose}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--dh-bg-hover)";
+            e.currentTarget.style.color = "var(--dh-text-bright)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = "var(--dh-text-action)";
+          }}
+          style={{
+            width: 28,
+            height: 28,
+            border: "1px solid var(--dh-border-control)",
+            background: "transparent",
+            borderRadius: 6,
+            color: "var(--dh-text-action)",
+            cursor: "pointer",
+            font: "400 13px/1 var(--font-mono)",
+            padding: 0,
+            flex: "0 0 auto",
+            transition: "var(--transition-state)",
+          }}
+        >
+          ×
+        </button>
       </div>
 
       <div
@@ -286,41 +293,21 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
           alignItems: "center",
           gap: 6,
           padding: "0 8px 0 12px",
-          background: "var(--color-surface-container)",
-          boxShadow: "inset 0 -1px 0 var(--material-hairline)",
+          background: "var(--dh-bg-card)",
+          borderBottom: "1px solid var(--dh-border-hairline)",
         }}
       >
-        <Button variant="secondary" size="sm" icon="rotate-cw" disabled={stopDisabled} onClick={() => onRestart(server.id)}>
+        <Button variant="secondary" size="sm" icon="restart_alt" disabled={stopDisabled} onClick={() => onRestart(server.id)}>
           Restart
         </Button>
-        <Button variant="secondary" size="sm" icon="square" disabled={stopDisabled} onClick={() => onStop(server.id)}>
+        <Button variant="secondary" size="sm" icon="stop" disabled={stopDisabled} onClick={() => onStop(server.id)}>
           Stop
         </Button>
         <span style={{ flex: 1 }} />
-        <IconButton icon="clock" label="Toggle timestamps" size="sm" selected={timestamps} onClick={() => setTimestamps((t) => !t)} />
-        <IconButton icon="wrap-text" label="Toggle soft wrap" size="sm" selected={wrap} onClick={() => setWrap((w) => !w)} />
+        <IconButton icon="schedule" label="Toggle timestamps" size="sm" selected={timestamps} onClick={() => setTimestamps((t) => !t)} />
+        <IconButton icon="wrap_text" label="Toggle soft wrap" size="sm" selected={wrap} onClick={() => setWrap((w) => !w)} />
         <IconButton icon="pause" label="Pause stream" size="sm" selected={paused} onClick={togglePaused} />
-        <IconButton icon="eraser" label="Clear output" size="sm" onClick={clearLog} />
-      </div>
-
-      <div
-        style={{
-          flex: "0 0 auto",
-          height: 22,
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          padding: "0 12px",
-          background: "var(--color-surface-container-low)",
-          boxShadow: "inset 0 -1px 0 var(--material-hairline)",
-          font: "400 11px/1 var(--font-mono)",
-          color: "var(--color-outline)",
-          overflow: "hidden",
-          whiteSpace: "nowrap",
-        }}
-      >
-        <Icon name={server.kind === "docker" ? "container" : "folder"} size={11} color="var(--color-outline)" style={{ flex: "0 0 auto" }} />
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{server.kind === "docker" ? server.container : tildify(server.cwd)}</span>
+        <IconButton icon="ink_eraser" label="Clear output" size="sm" onClick={clearLog} />
       </div>
 
       <div
@@ -330,31 +317,36 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
           display: "flex",
           alignItems: "center",
           padding: "0 12px",
-          background: "var(--color-surface-container-low)",
-          boxShadow: "inset 0 -1px 0 var(--material-hairline)",
+          background: "var(--dh-bg-card)",
+          borderBottom: "1px solid var(--dh-border-hairline)",
           font: "400 11px/1 var(--font-mono)",
-          color: "var(--color-on-surface-variant)",
+          color: "var(--dh-text-secondary)",
           fontVariantNumeric: "tabular-nums",
           overflow: "hidden",
           whiteSpace: "nowrap",
         }}
       >
-        <span style={{ color: "var(--color-on-surface)", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {server.kind === "docker" ? "docker container" : server.command}
+        <Icon name={server.kind === "docker" ? "inventory_2" : "folder"} size={11} color="var(--dh-text-muted)" style={{ flex: "0 0 auto", marginRight: 6 }} />
+        <span style={{ color: "var(--dh-text)", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {server.kind === "docker" ? server.container : server.command}
         </span>
-        <span style={{ color: "var(--color-outline)", padding: "0 8px" }}>·</span>
+        <span style={{ color: "var(--dh-text-muted)", padding: "0 8px" }}>·</span>
         <span>{state.pid ? `pid ${state.pid}` : "pid —"}</span>
-        <span style={{ color: "var(--color-outline)", padding: "0 8px" }}>·</span>
+        <span style={{ color: "var(--dh-text-muted)", padding: "0 8px" }}>·</span>
         <span>up {state.startedAt ? dur(now - state.startedAt) : "—"}</span>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, position: "relative", background: "var(--color-surface-container-lowest)" }}>
+      <div style={{ flex: 1, minHeight: 0, position: "relative", background: "var(--dh-bg-rail)" }}>
         <div style={{ position: "absolute", inset: 0, padding: "8px 0" }} ref={containerRef} />
         {lineCount === 0 && (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
             <EmptyState {...emptyStateProps(state)} />
           </div>
         )}
+      </div>
+
+      <div style={{ flex: "0 0 auto", padding: "12px 22px", borderTop: "1px solid var(--dh-border-hairline)", font: "400 10px/1 var(--font-mono)", color: "var(--dh-text-faint)", letterSpacing: "0.04em" }}>
+        tail -f · last {MAX_BUFFERED_LINES} lines
       </div>
       </div>
     </>

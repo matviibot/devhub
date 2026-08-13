@@ -1,28 +1,49 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 
 export interface MenuButtonItem {
   key: string;
   label?: string;
+  /** Leading Material Symbol name (e.g. "edit", "delete"). Omit for rows
+   *  with no icon. */
   icon?: string;
+  /** Trailing text, e.g. a shortcut ("⌘C"). */
+  hint?: string;
+  /** Destructive row — red text, red-tinted hover, sits below a divider. */
+  danger?: boolean;
   divider?: boolean;
   onSelect?: () => void;
 }
 
+type Size = "sm" | "md";
+
+const TRIGGER_SIZES: Record<Size, { box: number; icon: number }> = {
+  sm: { box: 24, icon: 14 },
+  md: { box: 30, icon: 16 },
+};
+
 interface Props {
   label: string;
+  /** Trigger's Material Symbol name. */
   icon?: string;
+  /** Square trigger box size — "md" for header-level menus sitting next to
+   *  a full-height action button, "sm" (default) for row-level "actions"
+   *  triggers. */
+  size?: Size;
   items: MenuButtonItem[];
-  /** "primary" (default) is today's filled pill trigger; "icon" is a bare
-   *  IconButton-style trigger for use in toolbars/row actions. */
-  variant?: "primary" | "icon";
+  /** Below 700px the panel becomes a full-width bottom sheet. */
+  compact?: boolean;
 }
 
-/** Compact button with a chevron that opens an anchored dropdown menu. */
-export function MenuButton({ label, icon, items, variant = "primary" }: Props) {
+/** Compact square icon trigger that opens an anchored dropdown menu — the
+ *  one panel component behind every "more actions" menu in the app. */
+export function MenuButton({ label, icon = "more_vert", size = "sm", items, compact = false }: Props) {
   const [open, setOpen] = useState(false);
+  const [hover, setHover] = useState(false);
+  const [placement, setPlacement] = useState<{ up: boolean; left: boolean }>({ up: false, left: false });
   const ref = useRef<HTMLSpanElement | null>(null);
-  const isIcon = variant === "icon";
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const t = TRIGGER_SIZES[size];
 
   useEffect(() => {
     if (!open) return;
@@ -40,82 +61,119 @@ export function MenuButton({ label, icon, items, variant = "primary" }: Props) {
     };
   }, [open]);
 
+  // Flip near viewport edges: left-aligned within 220px of the right edge,
+  // above the trigger within 200px of the bottom.
+  useLayoutEffect(() => {
+    if (!open || compact || !ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    setPlacement({
+      up: window.innerHeight - r.bottom < 200,
+      left: window.innerWidth - r.right < 220,
+    });
+  }, [open, compact]);
+
   return (
     <span ref={ref} style={{ position: "relative", display: "inline-flex" }}>
       <button
         type="button"
-        aria-label={isIcon ? label : undefined}
-        title={isIcon ? label : undefined}
+        aria-label={label}
+        title={label}
         onClick={(e) => {
           e.stopPropagation();
           setOpen((o) => !o);
         }}
-        style={
-          isIcon
-            ? {
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 22,
-                height: 22,
-                borderRadius: "var(--radius-xs)",
-                border: "none",
-                padding: 0,
-                background: open ? "var(--state-selected)" : "transparent",
-                color: open ? "var(--color-primary)" : "var(--color-on-surface-variant)",
-                cursor: "pointer",
-                WebkitAppearance: "none",
-                outline: "none",
-              }
-            : {
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                height: "var(--control-height-sm)",
-                padding: "0 6px 0 8px",
-                borderRadius: "var(--radius-sm)",
-                border: "none",
-                background: "var(--color-primary)",
-                color: "var(--color-on-primary)",
-                font: "600 var(--text-label-medium-size)/var(--text-label-medium-line) var(--font-ui)",
-                letterSpacing: "var(--text-label-medium-track)",
-                fontFamily: "var(--font-ui)",
-                cursor: "pointer",
-                WebkitAppearance: "none",
-                outline: "none",
-              }
-        }
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: t.box,
+          height: t.box,
+          flex: "0 0 auto",
+          border: "1px solid var(--dh-border-button)",
+          borderRadius: 8,
+          padding: 0,
+          background: open || hover ? "var(--dh-bg-hover)" : "transparent",
+          color: open || hover ? "var(--dh-text-bright)" : "var(--dh-text-action)",
+          cursor: "pointer",
+          WebkitAppearance: "none",
+          outline: "none",
+          transition: "var(--transition-state)",
+        }}
       >
-        <Icon name={icon ?? (isIcon ? "ellipsis-vertical" : "plus")} size={isIcon ? 13 : 13} />
-        {!isIcon && label}
-        {!isIcon && (
-          <Icon
-            name="chevron-down"
-            size={12}
-            style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform var(--duration-fast) var(--ease-standard)" }}
-          />
-        )}
+        <Icon name={icon} size={t.icon} />
       </button>
-      {open && (
+      {open && compact && (
+        <>
+          <div
+            onClick={() => setOpen(false)}
+            style={{ position: "fixed", inset: 0, background: "var(--dh-scrim)", opacity: 0.58, zIndex: 40, animation: "dh-scrim-in var(--duration-normal) var(--ease-out)" }}
+          />
+          <div
+            role="menu"
+            style={{
+              position: "fixed",
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 41,
+              background: "var(--dh-bg-card)",
+              borderTop: "1px solid var(--dh-border-button)",
+              borderRadius: "16px 16px 0 0",
+              padding: "6px 6px 10px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+              animation: "dh-sheet-in .25s ease-out both",
+            }}
+          >
+            <div style={{ padding: "12px 10px 8px", font: "600 14px/1 var(--font-ui)", color: "var(--dh-text)", textAlign: "center" }}>{label}</div>
+            {items.map((item) =>
+              item.divider ? (
+                <div key={item.key} style={{ height: 1, margin: "5px 6px", background: "var(--dh-border-hairline)" }} />
+              ) : (
+                <MenuRow
+                  key={item.key}
+                  item={item}
+                  compact
+                  onSelect={() => {
+                    setOpen(false);
+                    item.onSelect?.();
+                  }}
+                />
+              ),
+            )}
+          </div>
+        </>
+      )}
+      {open && !compact && (
         <div
+          ref={panelRef}
           role="menu"
           style={{
             position: "absolute",
-            top: "calc(100% + 4px)",
-            ...(isIcon ? { right: 0 } : { left: 0 }),
+            top: placement.up ? "auto" : "calc(100% + 4px)",
+            bottom: placement.up ? "calc(100% + 4px)" : "auto",
+            ...(placement.left ? { right: 0 } : { left: 0 }),
             zIndex: 30,
-            minWidth: 170,
-            maxHeight: 240,
+            minWidth: 200,
+            maxHeight: 280,
             overflowY: "auto",
-            padding: 4,
-            borderRadius: "var(--radius-md)",
-            background: "var(--color-surface-container-high)",
-            boxShadow: "var(--elevation-3)",
+            padding: 6,
+            borderRadius: 10,
+            background: "var(--dh-bg-card)",
+            border: "1px solid var(--dh-border-button)",
+            boxShadow: "0 14px 34px rgba(8,7,12,0.6)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            animation: "dh-menu-in .16s ease-out both",
           }}
         >
           {items.map((item) =>
             item.divider ? (
-              <div key={item.key} style={{ height: 1, margin: "4px 4px", background: "var(--material-hairline)" }} />
+              <div key={item.key} style={{ height: 1, margin: "5px 4px", background: "var(--dh-border-hairline)" }} />
             ) : (
               <MenuRow
                 key={item.key}
@@ -133,7 +191,7 @@ export function MenuButton({ label, icon, items, variant = "primary" }: Props) {
   );
 }
 
-function MenuRow({ item, onSelect }: { item: MenuButtonItem; onSelect: () => void }) {
+function MenuRow({ item, onSelect, compact = false }: { item: MenuButtonItem; onSelect: () => void; compact?: boolean }) {
   const [hover, setHover] = useState(false);
   return (
     <div
@@ -148,19 +206,22 @@ function MenuRow({ item, onSelect }: { item: MenuButtonItem; onSelect: () => voi
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 8,
-        height: 28,
-        padding: "0 8px",
-        borderRadius: "var(--radius-sm)",
-        background: hover ? "var(--state-hover)" : "transparent",
-        font: "400 12px/1 var(--font-ui)",
-        color: "var(--color-on-surface)",
-        cursor: "default",
+        gap: 10,
+        minHeight: compact ? 44 : undefined,
+        padding: "9px",
+        borderRadius: 7,
+        background: hover ? (item.danger ? "rgba(238,139,120,0.1)" : "var(--dh-bg-hover)") : "transparent",
+        cursor: "pointer",
         transition: "var(--transition-state)",
       }}
     >
-      {item.icon && <Icon name={item.icon} size={13} color="var(--color-on-surface-variant)" />}
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
+      <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 15, flex: "0 0 auto", color: item.danger ? "var(--dh-status-crashed)" : "var(--dh-text-secondary)" }}>
+        {item.icon && <Icon name={item.icon} size={14} />}
+      </span>
+      <span style={{ font: "400 12px/1 var(--font-mono)", color: item.danger ? "var(--dh-status-crashed)" : "var(--dh-text)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {item.label}
+      </span>
+      {item.hint && <span style={{ font: "400 10px/1 var(--font-mono)", color: "var(--dh-text-faint)", flex: "0 0 auto" }}>{item.hint}</span>}
     </div>
   );
 }

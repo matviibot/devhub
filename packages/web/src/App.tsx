@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useDevhub, type ServerInput } from "./hooks/useDevhub";
 import { useNow } from "./hooks/useNow";
+import { useBreakpoint } from "./hooks/useBreakpoint";
 import { Dashboard } from "./components/Dashboard";
 import { LogDrawer } from "./components/LogDrawer";
 import { Dialogs, type DeletedServerSnapshot, type DeletedSnapshot, type DialogState } from "./components/Dialogs";
-import { ToastStack, type ToastData } from "./ds";
+import type { ToastData } from "./ds";
 
 function toServerInput(s: DeletedServerSnapshot): ServerInput {
   return s.kind === "docker"
@@ -16,6 +17,7 @@ export function App() {
   const devhub = useDevhub();
   const {
     connected,
+    reconnectAttempt,
     projects,
     servers,
     discovered,
@@ -33,6 +35,7 @@ export function App() {
     track,
     killChild,
     reorderProjects,
+    reorderServers,
     createProject,
     createServer,
   } = devhub;
@@ -48,6 +51,7 @@ export function App() {
   const [pendingUndo, setPendingUndo] = useState<{ name: string; servers: DeletedServerSnapshot[] } | null>(null);
   const [toasts, setToasts] = useState<ToastData[]>([]);
   const now = useNow();
+  const { ref: rootRef, compact, medium } = useBreakpoint<HTMLDivElement>();
 
   useEffect(() => {
     if (openServerId && !servers.some((s) => s.id === openServerId)) setOpenServerId(null);
@@ -112,10 +116,23 @@ export function App() {
     }
   }
 
+  function handleMoveServer(id: string, toProjectId: string, fromProjectId: string) {
+    if (toProjectId === fromProjectId) return;
+    const server = servers.find((s) => s.id === id);
+    const toName = projects.find((p) => p.id === toProjectId)?.name ?? "project";
+    devhub.moveServer(id, toProjectId);
+    pushToast({
+      message: `Moved "${server?.name ?? "server"}" to "${toName}"`,
+      actionLabel: "Undo",
+      onAction: () => devhub.moveServer(id, fromProjectId),
+    });
+  }
+
   const openServer = servers.find((s) => s.id === openServerId) ?? null;
 
   return (
     <div
+      ref={rootRef}
       data-theme="dark"
       style={{
         height: "100vh",
@@ -128,11 +145,69 @@ export function App() {
         position: "relative",
       }}
     >
-      {!connected && <div className="app__disconnected">Reconnecting to devhub daemon…</div>}
+      {!connected && (
+        <div
+          style={{
+            flex: "0 0 auto",
+            margin: "12px 12px 0",
+            padding: "11px 18px",
+            background: "rgba(223,179,92,0.08)",
+            border: "1px solid rgba(223,179,92,0.22)",
+            borderRadius: 9,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <span
+            style={{
+              width: 12,
+              height: 12,
+              borderRadius: "50%",
+              border: "1.5px solid rgba(223,179,92,0.3)",
+              borderTopColor: "var(--dh-status-starting)",
+              animation: "ds-spin 700ms linear infinite",
+              flex: "0 0 auto",
+            }}
+          />
+          <span style={{ font: "400 11.5px/1 var(--font-mono)", color: "#e5cd9c" }}>
+            reconnecting to devhub daemon…{reconnectAttempt > 0 && <span style={{ color: "rgba(229,205,156,0.6)" }}> attempt {reconnectAttempt}</span>}
+          </span>
+        </div>
+      )}
       {error && (
-        <div className="app__error">
-          {error}
-          <button onClick={clearError} aria-label="Dismiss">
+        <div
+          style={{
+            flex: "0 0 auto",
+            margin: "12px 12px 0",
+            padding: "11px 18px",
+            background: "rgba(238,139,120,0.08)",
+            border: "1px solid rgba(238,139,120,0.22)",
+            borderRadius: 9,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 12,
+          }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--dh-status-crashed)", flex: "0 0 auto", marginTop: 6 }} />
+          <span style={{ flex: 1, minWidth: 0, font: "400 11.5px/1.4 var(--font-mono)", color: "var(--dh-alert-text)", wordBreak: "break-word" }}>{error}</span>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={clearError}
+            style={{
+              width: 26,
+              height: 26,
+              border: "1px solid rgba(238,139,120,0.3)",
+              background: "transparent",
+              borderRadius: 6,
+              color: "var(--dh-alert-text)",
+              cursor: "pointer",
+              font: "400 12px/1 var(--font-mono)",
+              padding: 0,
+              flex: "0 0 auto",
+            }}
+          >
             ×
           </button>
         </div>
@@ -146,6 +221,8 @@ export function App() {
           openServerId={openServerId}
           pendingServerActions={pendingServerActions}
           now={now}
+          compact={compact}
+          medium={medium}
           uiState={uiState}
           onSetUiState={setUiState}
           onOpen={toggleOpen}
@@ -159,6 +236,8 @@ export function App() {
           onAddServer={(projectId) => setDialog({ kind: "server", mode: "add", projectId })}
           onEditServer={(serverId) => setDialog({ kind: "server", mode: "edit", serverId })}
           onDeleteServer={(id) => setDialog({ kind: "delete", target: "server", id })}
+          onDeleteProject={(id) => setDialog({ kind: "delete", target: "project", id })}
+          onRevealInFinder={devhub.revealPath}
           onTrack={track}
           onKillChild={killChild}
           onQuickAdd={(item) =>
@@ -176,10 +255,23 @@ export function App() {
             )
           }
           onReorderProjects={reorderProjects}
+          onReorderServers={reorderServers}
+          onMoveServer={handleMoveServer}
+          toasts={toasts}
+          onDismissToast={dismissToast}
         />
       </div>
       {openServer && (
-        <LogDrawer server={openServer} addLogListener={addLogListener} onClose={() => setOpenServerId(null)} onStop={stop} onRestart={restart} now={now} />
+        <LogDrawer
+          server={openServer}
+          addLogListener={addLogListener}
+          onClose={() => setOpenServerId(null)}
+          onStop={stop}
+          onRestart={restart}
+          now={now}
+          compact={compact}
+          medium={medium}
+        />
       )}
 
       <Dialogs
@@ -189,8 +281,8 @@ export function App() {
         onChainToAddServer={(name, prefill) => setPendingProjectForServer({ name, ...prefill })}
         onDeleted={handleDeleted}
         onDeleteProject={(id) => setDialog({ kind: "delete", target: "project", id })}
+        onDeleteServer={(id) => setDialog({ kind: "delete", target: "server", id })}
       />
-      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

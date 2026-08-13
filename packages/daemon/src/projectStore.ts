@@ -74,11 +74,12 @@ export class ProjectStore {
     return `${root}-${n}`;
   }
 
-  createProject(name: string): ProjectConfig {
+  createProject(name: string, roots: ProjectRoot[] = []): ProjectConfig {
     name = name.trim();
     if (!name) throw new Error("Project name is required");
     const id = this.uniqueId(name, new Set(this.projects.map((p) => p.id)));
-    const project: ProjectConfig = { id, name, roots: [], servers: [] };
+    const cleanRoots = roots.map((r) => ({ ...r, path: r.path.trim() })).filter((r) => r.path);
+    const project: ProjectConfig = { id, name, roots: cleanRoots, servers: [] };
     this.projects.push(project);
     this.persist();
     return project;
@@ -149,12 +150,41 @@ export class ProjectStore {
     return null;
   }
 
+  /** Relocates a server to a different project — splice out of whichever
+   *  project currently owns it, push onto the target's servers array. The
+   *  server keeps its id/config verbatim; only its owning project changes. */
+  moveServer(id: string, projectId: string): ServerConfig {
+    const target = this.project(projectId);
+    if (!target) throw new Error("Project not found");
+    for (const p of this.projects) {
+      const idx = p.servers.findIndex((x) => x.id === id);
+      if (idx === -1) continue;
+      if (p.id === projectId) return p.servers[idx];
+      const [server] = p.servers.splice(idx, 1);
+      target.servers.push(server);
+      this.persist();
+      return server;
+    }
+    throw new Error("Server not found");
+  }
+
   reorderProjects(ids: string[]) {
     const byId = new Map(this.projects.map((p) => [p.id, p]));
     if (ids.length !== byId.size || ids.some((id) => !byId.has(id))) {
       throw new Error("reorderProjects: ids must be exactly the current project ids");
     }
     this.projects = ids.map((id) => byId.get(id)!);
+    this.persist();
+  }
+
+  reorderServers(projectId: string, ids: string[]) {
+    const p = this.project(projectId);
+    if (!p) throw new Error("Project not found");
+    const byId = new Map(p.servers.map((s) => [s.id, s]));
+    if (ids.length !== byId.size || ids.some((id) => !byId.has(id))) {
+      throw new Error("reorderServers: ids must be exactly the project's current server ids");
+    }
+    p.servers = ids.map((id) => byId.get(id)!);
     this.persist();
   }
 }

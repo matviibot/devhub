@@ -154,6 +154,22 @@ export interface UiState {
  *  daemon has real filesystem access, the browser sandbox doesn't. */
 export interface DirectoryEntry {
   name: string;
+  /** Whether this subdirectory itself contains a package.json — lets the
+   *  browser hint which folders the scripts-detection step will find
+   *  something in, without a round trip per row. */
+  hasPackageJson: boolean;
+}
+
+/** One Docker container on the host, running or not — for the "pick a
+ *  container" list, distinct from `DiscoveredDocker`, which is only the
+ *  subset unmatched by any configured server. */
+export interface DockerContainerInfo {
+  id: string;
+  names: string[];
+  image: string;
+  running: boolean;
+  /** Raw `docker ps` state ("running", "exited", "created", "paused", …). */
+  state: string;
 }
 
 // ---- Client -> Daemon ----
@@ -166,7 +182,7 @@ export type ClientMessage =
   | { type: "stopProject"; projectId: string }
   | { type: "subscribeLogs"; id: string }
   | { type: "unsubscribeLogs"; id: string }
-  | { type: "createProject"; name: string }
+  | { type: "createProject"; name: string; roots?: ProjectRoot[] }
   | { type: "updateProject"; id: string; name: string; roots: ProjectRoot[] }
   | { type: "deleteProject"; id: string }
   | { type: "createServer"; projectId: string; name: string; kind: "process"; command: string; cwd: string; port?: number }
@@ -179,7 +195,11 @@ export type ClientMessage =
   | { type: "killChild"; pid: number; ownerServerId?: string }
   | { type: "setUiState"; state: UiState }
   | { type: "reorderProjects"; ids: string[] }
-  | { type: "listDirectory"; path?: string };
+  | { type: "reorderServers"; projectId: string; ids: string[] }
+  | { type: "listDirectory"; path?: string }
+  | { type: "listContainers" }
+  | { type: "moveServer"; id: string; projectId: string }
+  | { type: "revealPath"; path: string };
 
 // ---- Daemon -> Client ----
 
@@ -193,4 +213,5 @@ export type ServerMessage =
   | { type: "discovered"; items: DiscoveredProject[] }
   | { type: "uiState"; state: UiState }
   | { type: "commandError"; message: string }
-  | { type: "directoryListing"; path: string; parent: string | null; entries: DirectoryEntry[]; error?: string };
+  | { type: "directoryListing"; path: string; parent: string | null; entries: DirectoryEntry[]; error?: string }
+  | { type: "containerList"; items: DockerContainerInfo[] };

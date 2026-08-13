@@ -12,7 +12,10 @@ body,
 }
 
 body {
-  background: var(--color-surface);
+  /* True outer page background — the mockup's html/body rule is a shade
+     darker than the app shell (--color-surface) that fills it, visible
+     only as letterboxing if the shell doesn't cover the viewport. */
+  background: var(--dh-bg-page);
   color: var(--color-on-surface);
   font-family: var(--font-ui);
 }
@@ -25,43 +28,20 @@ a:hover {
   color: var(--link-hover);
 }
 
-.app__disconnected {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  background: var(--color-warning);
-  color: var(--color-on-warning);
-  text-align: center;
-  font: 400 12px/1.6 var(--font-ui);
-  padding: 4px;
-  z-index: 10;
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
 }
-
-.app__error {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  background: var(--color-error);
-  color: var(--color-on-error);
-  text-align: center;
-  font: 400 12px/1.6 var(--font-ui);
-  padding: 4px 32px;
-  z-index: 50;
+::-webkit-scrollbar-thumb {
+  background: var(--dh-scrollbar-thumb);
+  border-radius: 5px;
 }
-
-.app__error button {
-  position: absolute;
-  right: 8px;
-  top: 0;
-  background: none;
-  border: none;
-  color: inherit;
-  font-size: 16px;
-  line-height: 1.6;
-  cursor: pointer;
-  padding: 0 6px;
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::placeholder {
+  color: var(--dh-placeholder);
+  opacity: 1;
 }
 
 /* xterm.js fills its wrapper; the wrapper itself is positioned by LogPanel */
@@ -108,6 +88,42 @@ a:hover {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+@keyframes dhrise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dh-tooltip-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dh-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dh-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
   }
 }
 @media (prefers-reduced-motion: reduce) {

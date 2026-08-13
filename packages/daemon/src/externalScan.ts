@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import type { ChildProcess, DiscoveredDocker, DiscoveredProcess } from "@devhub/shared";
+import type { ChildProcess, DiscoveredDocker, DiscoveredProcess, DockerContainerInfo } from "@devhub/shared";
 
 const execFileAsync = promisify(execFile);
 const EXEC_OPTS = { timeout: 3000 };
@@ -241,13 +241,6 @@ export async function processGroupId(pid: number): Promise<number | null> {
   }
 }
 
-export interface DockerContainerInfo {
-  id: string;
-  names: string[];
-  image: string;
-  running: boolean;
-}
-
 export interface DockerInspectState {
   running: boolean;
   pid: number | null;
@@ -287,7 +280,7 @@ export async function scanDockerContainers(): Promise<DockerContainerInfo[]> {
     if (!line.trim()) continue;
     const [id, names, image, state] = line.split("\t");
     if (!id) continue;
-    results.push({ id, names: names ? names.split(",") : [], image: image ?? "", running: state === "running" });
+    results.push({ id, names: names ? names.split(",") : [], image: image ?? "", running: state === "running", state: state ?? "" });
   }
   return results;
 }

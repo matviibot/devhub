@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { IconButton } from "./IconButton";
+import { useEffect, useRef, useState } from "react";
 
 export interface ToastData {
   id: string;
@@ -14,59 +13,101 @@ interface StackProps {
 }
 
 const AUTO_DISMISS_MS = 6000;
+const MAX_VISIBLE = 3;
 
-/** Fixed bottom-right stack of ephemeral messages, each with an optional
- *  action button and an auto-dismiss timer. */
+/** Absolutely-positioned bottom-left stack — the caller places it inside a
+ *  `position: relative` container (the detail pane, 24px inset) so it never
+ *  covers the rail. Newest on top, capped at 3 visible with the rest
+ *  collapsed into a "+N more" line. */
 export function ToastStack({ toasts, onDismiss }: StackProps) {
   if (!toasts.length) return null;
+  const visible = toasts.slice(-MAX_VISIBLE).reverse();
+  const overflow = toasts.length - visible.length;
   return (
     <div
       style={{
         position: "absolute",
-        right: 16,
-        bottom: 16,
+        left: 24,
+        bottom: 24,
         zIndex: 50,
         display: "flex",
         flexDirection: "column",
+        alignItems: "flex-start",
         gap: 8,
         pointerEvents: "none",
       }}
     >
-      {toasts.map((t) => (
+      {visible.map((t) => (
         <Toast key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />
       ))}
+      {overflow > 0 && (
+        <span style={{ font: "400 11px/1 var(--font-mono)", color: "var(--dh-text-faint)", pointerEvents: "none" }}>
+          +{overflow} more delete{overflow === 1 ? "" : "s"}
+        </span>
+      )}
     </div>
   );
 }
 
 function Toast({ toast, onDismiss }: { toast: ToastData; onDismiss: () => void }) {
+  const [paused, setPaused] = useState(false);
+  const [left, setLeft] = useState(100);
+  const startRef = useRef(Date.now());
+  const remainingRef = useRef(AUTO_DISMISS_MS);
+
   useEffect(() => {
-    const timer = setTimeout(onDismiss, AUTO_DISMISS_MS);
-    return () => clearTimeout(timer);
-    // Intentionally re-armed only when the toast identity changes, not on
-    // every onDismiss identity change (which is a fresh closure per render).
+    if (paused) return;
+    startRef.current = Date.now();
+    const frame = () => {
+      const elapsed = Date.now() - startRef.current;
+      const pct = Math.max(0, 100 - (elapsed / remainingRef.current) * 100);
+      setLeft(pct);
+      if (pct <= 0) {
+        onDismiss();
+        return;
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    let raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toast.id]);
+  }, [paused]);
+
+  function pause() {
+    remainingRef.current = Math.max(1, remainingRef.current - (Date.now() - startRef.current));
+    setPaused(true);
+  }
+  function resume() {
+    setPaused(false);
+  }
 
   return (
     <div
       role="status"
       data-dh-toast="1"
+      onMouseEnter={pause}
+      onMouseLeave={resume}
+      onFocus={pause}
+      onBlur={resume}
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 10,
-        minWidth: 240,
-        maxWidth: 360,
-        padding: "10px 8px 10px 14px",
-        borderRadius: "var(--radius-md)",
-        background: "var(--color-surface-container-high)",
-        boxShadow: "var(--elevation-3)",
+        gap: 12,
+        width: 380,
+        maxWidth: "min(380px, calc(100vw - 48px))",
+        padding: "13px 14px",
+        borderRadius: 10,
+        background: "var(--dh-bg-card)",
+        border: "1px solid var(--dh-border-button)",
+        boxShadow: "0 14px 34px rgba(8,7,12,0.55)",
         pointerEvents: "auto",
-        animation: "dh-toast-in var(--duration-normal) var(--ease-out)",
+        animation: "dhrise .18s ease-out both",
       }}
     >
-      <span style={{ flex: 1, minWidth: 0, font: "400 13px/18px var(--font-ui)", color: "var(--color-on-surface)" }}>{toast.message}</span>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--dh-text-dot)", flex: "0 0 auto" }} />
+      <span style={{ flex: 1, minWidth: 0, font: "400 12px/1 var(--font-mono)", color: "var(--dh-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {toast.message}
+      </span>
       {toast.actionLabel && toast.onAction && (
         <button
           type="button"
@@ -76,21 +117,29 @@ function Toast({ toast, onDismiss }: { toast: ToastData; onDismiss: () => void }
           }}
           style={{
             flex: "0 0 auto",
-            height: 26,
-            padding: "0 10px",
-            border: "none",
-            borderRadius: "var(--radius-sm)",
+            padding: "5px 10px",
+            border: "1px solid var(--dh-border-button)",
+            borderRadius: 6,
             background: "transparent",
-            color: "var(--color-primary)",
-            font: "600 12px/1 var(--font-ui)",
+            color: "var(--dh-link)",
+            font: "400 11px/1 var(--font-mono)",
             cursor: "pointer",
-            WebkitAppearance: "none",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--dh-bg-hover)";
+            e.currentTarget.style.color = "var(--dh-link-hover)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = "var(--dh-link)";
           }}
         >
           {toast.actionLabel}
         </button>
       )}
-      <IconButton icon="x" label="Dismiss" size="sm" onClick={onDismiss} />
+      <span style={{ width: 22, height: 2, borderRadius: 2, background: "var(--dh-border-button)", flex: "0 0 auto", overflow: "hidden", display: "block" }}>
+        <span style={{ display: "block", width: `${left}%`, height: 2, background: "var(--dh-text-dot)" }} />
+      </span>
     </div>
   );
 }

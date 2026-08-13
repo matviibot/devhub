@@ -1,7 +1,5 @@
 import type { CSSProperties } from "react";
 
-const CDN = "https://cdn.jsdelivr.net/npm/lucide-static@0.544.0/icons/";
-
 if (typeof document !== "undefined" && !document.getElementById("ds-keyframes")) {
   const el = document.createElement("style");
   el.id = "ds-keyframes";
@@ -11,6 +9,8 @@ if (typeof document !== "undefined" && !document.getElementById("ds-keyframes"))
 }
 
 interface Props {
+  /** A Material Symbols ligature name, e.g. "folder", "add", "wrap_text" —
+   *  see https://fonts.google.com/icons for the full set. */
   name: string;
   size?: number;
   color?: string;
@@ -18,31 +18,39 @@ interface Props {
   style?: CSSProperties;
 }
 
-/** Lucide glyph rendered as a CSS mask so it inherits currentColor. */
+/** Google Material Symbol, rendered via the variable icon font's ligature
+ *  text so it inherits currentColor/size like any other glyph. */
 export function Icon({ name, size = 16, color = "currentColor", title, style, ...rest }: Props) {
-  const url = `url("${CDN}${name}.svg")`;
   return (
     <span
       aria-hidden={title ? undefined : true}
       role={title ? "img" : undefined}
       aria-label={title}
       style={{
+        fontFamily: "var(--font-icons)",
+        fontWeight: "normal",
+        fontStyle: "normal",
         display: "inline-block",
+        lineHeight: 1,
+        textTransform: "none",
+        letterSpacing: "normal",
+        wordWrap: "normal",
+        whiteSpace: "nowrap",
+        direction: "ltr",
+        WebkitFontSmoothing: "antialiased",
+        fontVariationSettings: `'opsz' ${Math.max(20, Math.min(48, size))}`,
+        fontSize: size,
         width: size,
         height: size,
+        color,
         flex: "0 0 auto",
-        backgroundColor: color,
-        WebkitMaskImage: url,
-        maskImage: url,
-        WebkitMaskRepeat: "no-repeat",
-        maskRepeat: "no-repeat",
-        WebkitMaskPosition: "center",
-        maskPosition: "center",
-        WebkitMaskSize: "contain",
-        maskSize: "contain",
+        userSelect: "none",
+        overflow: "hidden",
         ...style,
       }}
       {...rest}
-    />
+    >
+      {name}
+    </span>
   );
 }

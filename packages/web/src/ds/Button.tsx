@@ -98,7 +98,7 @@ export function Button({
       {...rest}
     >
       {loading ? (
-        <Icon name="loader-circle" size={s.icon} style={{ animation: "ds-spin 900ms linear infinite" }} />
+        <Icon name="progress_activity" size={s.icon} style={{ animation: "ds-spin 900ms linear infinite" }} />
       ) : icon ? (
         <Icon name={icon} size={s.icon} />
       ) : null}

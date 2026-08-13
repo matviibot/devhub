@@ -1,24 +1,32 @@
 import type { ReactNode } from "react";
-import { Icon } from "./Icon";
-import { IconButton } from "./IconButton";
 
 interface Props {
-  icon: string;
   title: string;
+  /** 11px mono secondary line under the title, e.g. "acme · main". */
+  subtitle?: string;
   width?: string;
   onClose: () => void;
+  /** Compact-only: replaces the × with a "‹ back" affordance. Falls back
+   *  to `onClose` when omitted. */
+  onBack?: () => void;
+  /** Left-aligned destructive action in the footer (e.g. "delete project"),
+   *  separated from the trailing buttons by a flexible spacer. */
+  dangerSlot?: ReactNode;
   footer: ReactNode;
   children: ReactNode;
+  compact?: boolean;
 }
 
-/** Scrim + centered panel, matching the console chrome (header/body/footer). */
-export function Dialog({ icon, title, width = "440px", onClose, footer, children }: Props) {
+/** Scrim + panel — the shared shell behind every modal (Add/Edit Project,
+ *  Add/Edit Server, Folder Browser, Container Picker). Centered floating
+ *  dialog at rest; below 700px it becomes a full-height bottom sheet. */
+export function Dialog({ title, subtitle, width = "560px", onClose, onBack, dangerSlot, footer, children, compact = false }: Props) {
   return (
-    <div style={{ position: "absolute", inset: 0, zIndex: 40, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: 48 }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 40, display: "flex", alignItems: compact ? "flex-end" : "center", justifyContent: "center" }}>
       <div
         data-dh-scrim="1"
         onClick={onClose}
-        style={{ position: "absolute", inset: 0, background: `rgba(0, 0, 0, var(--scrim-alpha))`, animation: "dh-scrim-in var(--duration-fast) var(--ease-standard)" }}
+        style={{ position: "absolute", inset: 0, background: "var(--dh-scrim)", opacity: 0.58, animation: "dh-scrim-in var(--duration-normal) var(--ease-out)" }}
       />
       <div
         data-dh-dialog="1"
@@ -26,64 +34,118 @@ export function Dialog({ icon, title, width = "440px", onClose, footer, children
         aria-modal="true"
         style={{
           position: "relative",
-          width,
-          maxWidth: "calc(100% - 48px)",
-          maxHeight: "calc(100% - 96px)",
+          width: compact ? "100%" : width,
+          maxWidth: "100%",
+          height: compact ? "88%" : undefined,
+          maxHeight: compact ? undefined : "calc(100% - 64px)",
           display: "flex",
           flexDirection: "column",
-          background: "var(--color-surface-container-high)",
-          borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--elevation-4)",
+          background: "var(--dh-bg-card)",
+          border: compact ? "none" : "1px solid var(--dh-border-button)",
+          borderTop: compact ? "1px solid var(--dh-border-button)" : undefined,
+          borderRadius: compact ? "16px 16px 0 0" : 10,
           overflow: "hidden",
-          animation: "dh-dialog-in var(--duration-normal) var(--ease-out)",
+          animation: compact ? "dh-sheet-in .25s ease-out both" : "dhrise .2s ease-out both",
         }}
       >
         <div
           style={{
             flex: "0 0 auto",
-            height: 38,
+            padding: compact ? "14px 16px" : "20px 22px 16px",
+            borderBottom: "1px solid var(--dh-border-hairline)",
             display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "0 6px 0 12px",
-            background: "var(--material-thick)",
-            backdropFilter: "saturate(180%) blur(var(--material-blur-thick))",
-            boxShadow: "inset 0 -1px 0 var(--material-hairline)",
+            alignItems: compact ? "center" : "flex-start",
+            gap: 12,
           }}
         >
-          <Icon name={icon} size={15} color="var(--color-on-surface-variant)" />
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              font: "600 13px/1 var(--font-ui)",
-              letterSpacing: "-0.1px",
-              color: "var(--color-on-surface)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {title}
-          </span>
-          <IconButton icon="x" label="Close" size="sm" onClick={onClose} />
+          {compact ? (
+            <>
+              <button
+                type="button"
+                onClick={onBack ?? onClose}
+                style={{
+                  minHeight: 44,
+                  padding: "0 12px",
+                  background: "transparent",
+                  border: "1px solid var(--dh-border-button)",
+                  borderRadius: 9,
+                  color: "var(--dh-text-back)",
+                  font: "400 12px/1 var(--font-mono)",
+                  cursor: "pointer",
+                }}
+              >
+                ‹ back
+              </button>
+              <span style={{ flex: 1, textAlign: "center", font: "600 14px/1 var(--font-ui)", letterSpacing: "-0.015em", color: "var(--dh-text)" }}>{title}</span>
+              <span style={{ width: 56, flex: "0 0 auto" }} />
+            </>
+          ) : (
+            <>
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 5 }}>
+                <span style={{ font: "600 15px/1 var(--font-ui)", letterSpacing: "-0.015em", color: "var(--dh-text)" }}>{title}</span>
+                {subtitle && <span style={{ font: "400 11px/1 var(--font-mono)", color: "var(--dh-text-host)" }}>{subtitle}</span>}
+              </div>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={onClose}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 28,
+                  height: 28,
+                  border: "1px solid var(--dh-border-control)",
+                  background: "transparent",
+                  borderRadius: 6,
+                  color: "var(--dh-text-action)",
+                  cursor: "pointer",
+                  font: "400 15px/1 var(--font-mono)",
+                  padding: 0,
+                  flex: "0 0 auto",
+                  transition: "var(--transition-state)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--dh-bg-hover)";
+                  e.currentTarget.style.color = "var(--dh-text-bright)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.color = "var(--dh-text-action)";
+                }}
+              >
+                <span style={{ display: "inline-block", transform: "rotate(45deg)" }}>+</span>
+              </button>
+            </>
+          )}
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 12 }}>{children}</div>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: compact ? "18px 16px" : 22, display: "flex", flexDirection: "column", gap: 22 }}>{children}</div>
 
         <div
           style={{
             flex: "0 0 auto",
-            height: 44,
+            padding: compact ? "12px 16px 18px" : "16px 22px 18px",
+            borderTop: "1px solid var(--dh-border-hairline)",
             display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "0 12px",
-            background: "var(--color-surface-container)",
-            boxShadow: "inset 0 1px 0 var(--material-hairline)",
+            flexDirection: compact ? "column" : "row",
+            alignItems: compact ? "stretch" : "center",
+            gap: compact ? 8 : 9,
+            flexWrap: "wrap",
           }}
         >
-          {footer}
+          {compact ? (
+            <>
+              {footer}
+              {dangerSlot}
+            </>
+          ) : (
+            <>
+              {dangerSlot}
+              <span style={{ flex: 1 }} />
+              {footer}
+            </>
+          )}
         </div>
       </div>
     </div>

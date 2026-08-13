@@ -1,108 +1,113 @@
-/* DevHub color system — M3 role architecture, HIG adaptive semantics.
-   Dark is the default (`:root`); light resolves via prefers-color-scheme and
-   can be forced with [data-theme="light"] / [data-theme="dark"].
-   Every `--color-x` has an `--color-on-x` guaranteed to meet 4.5:1 on it. */
+/* DevHub color system, following the "devhub redesign" design.
+   The app is dark-only (App.tsx always sets data-theme="dark").
+
+   The --dh-* block below is ported verbatim from the mockup's own
+   inline styles — every hex/rgba value is copied as-is, not
+   approximated. The mockup itself uses many close-but-distinct
+   one-off tones (e.g. five different near-white greys) rather than
+   a strict token scale, so these stay separate instead of being
+   collapsed into the M3 roles below. Dashboard/LogDrawer reference
+   these directly wherever they reproduce a mockup element.
+
+   The --color-* M3-style roles below are for ds/ primitives used
+   outside the mockup's own screens (dialogs, toasts, menus) — they
+   reuse --dh-* values where the mockup defines an equivalent. */
 :root{
-  /* palette primitives — one accent hue (azure 250) + cool neutrals */
-  --azure-95:#EAF2FF;--azure-90:#D3E3FF;--azure-80:#A8C8FF;--azure-70:#7FB2FF;--azure-60:#5A94E8;--azure-50:#3B78CC;--azure-40:#1F5AA8;--azure-30:#0F4180;--azure-20:#062A57;--azure-10:#001836;
-  --neutral-99:#FCFCFD;--neutral-98:#F8F9FA;--neutral-96:#F1F3F5;--neutral-94:#EBEDF0;--neutral-92:#E4E7EB;--neutral-87:#D7DBE0;--neutral-80:#C3C8CE;--neutral-60:#8B9299;--neutral-50:#71787F;--neutral-40:#585E65;--neutral-35:#4A5058;--neutral-30:#3C424A;--neutral-25:#33383F;--neutral-22:#2A2E34;--neutral-20:#25292E;--neutral-17:#1F2226;--neutral-15:#1B1E22;--neutral-12:#16181C;--neutral-10:#121417;--neutral-8:#0E1013;--neutral-6:#0A0C0E;--neutral-4:#07080A;
-  --green-90:#B4EFCD;--green-70:#6FD3A0;--green-50:#2E9E6B;--green-40:#188A5C;--green-35:#12734C;--green-30:#0E5C3C;--green-20:#08472C;--green-10:#00301B;
-  --amber-90:#FFE2A8;--amber-70:#F2C572;--amber-50:#C99422;--amber-35:#7A5A00;--amber-30:#65490A;--amber-20:#4A3500;--amber-10:#2E2000;
-  --red-90:#FFDAD6;--red-70:#FFB4AB;--red-50:#E5544A;--red-40:#C4372E;--red-30:#93000A;--red-20:#690005;--red-10:#410002;
-
-  /* ── M3 color roles: dark (default) — devhub neutral palette ────── */
-  --color-primary:#E2E2E0;--color-on-primary:#17181A;
-  --color-primary-container:#2A2C30;--color-on-primary-container:#E2E2E0;
-  --color-secondary:#9A9C99;--color-on-secondary:#17181A;
-  --color-secondary-container:#2A2C30;--color-on-secondary-container:#E2E2E0;
-
-  --color-surface:#17181A;--color-on-surface:#E2E2E0;--color-on-surface-variant:#9A9C99;
-  --color-surface-dim:#131416;--color-surface-bright:#2A2C30;
-  --color-surface-container-lowest:#131416;--color-surface-container-low:#17181A;--color-surface-container:#1E1F22;--color-surface-container-high:#2A2C30;--color-surface-container-highest:#34363B;
-  --color-surface-tint:#E2E2E0;
-  --color-inverse-surface:#E2E2E0;--color-on-inverse-surface:#17181A;
-
-  --color-outline:rgba(255,255,255,.1);--color-outline-variant:rgba(255,255,255,.07);
-  --color-scrim:#000;--color-shadow:#000;
-
-  --color-success:#86B58F;--color-on-success:#0E0F10;
-  --color-success-container:#1B2E22;--color-on-success-container:#A8D4B3;
-  --color-warning:#C9B072;--color-on-warning:#0E0F10;
-  --color-warning-container:#332C1A;--color-on-warning-container:#E6D19C;
-  --color-error:#C98A72;--color-on-error:#0E0F10;
-  --color-error-container:#332019;--color-on-error-container:#E7B7A4;
-  --color-neutral-status:#5B5D60;--color-on-neutral-status:#0E0F10;
-  --color-neutral-status-container:#24262A;--color-on-neutral-status-container:#B9BBB7;
-
-  /* HIG materials — layered translucency instead of hard borders */
-  --material-thin:rgba(30,31,34,.62);--material-regular:rgba(19,20,22,.76);--material-thick:rgba(14,15,16,.9);
-  --material-blur:20px;--material-blur-thick:36px;
-  --material-hairline:rgba(255,255,255,.07);
-  --state-hover:rgba(255,255,255,.055);--state-press:rgba(255,255,255,.10);--state-selected:rgba(255,255,255,.12);--state-focus-ring:rgba(255,255,255,.4);
-  --scrim-alpha:.55;
   color-scheme:dark;
-}
-@media (prefers-color-scheme:light){:root{color-scheme:light;
-  --color-primary:var(--azure-40);--color-on-primary:#FFFFFF;
-  --color-primary-container:var(--azure-90);--color-on-primary-container:var(--azure-10);
-  --color-secondary:var(--neutral-40);--color-on-secondary:#FFFFFF;
-  --color-secondary-container:var(--neutral-92);--color-on-secondary-container:var(--neutral-20);
 
-  --color-surface:var(--neutral-99);--color-on-surface:#1A1C1F;--color-on-surface-variant:#5B6169;
-  --color-surface-dim:var(--neutral-92);--color-surface-bright:#FFFFFF;
-  --color-surface-container-lowest:#FFFFFF;--color-surface-container-low:var(--neutral-98);--color-surface-container:var(--neutral-96);--color-surface-container-high:var(--neutral-94);--color-surface-container-highest:var(--neutral-92);
-  --color-surface-tint:var(--azure-40);
-  --color-inverse-surface:var(--neutral-17);--color-on-inverse-surface:var(--neutral-94);
+  /* ── literal mockup palette ──────────────────────────────────────── */
+  --dh-bg-page:#0a0910;
+  --dh-bg-app:#14131c;
+  --dh-bg-rail:#100f17;
+  --dh-bg-rail-footer:#0c0b12;
+  --dh-bg-card:#1c1a25;
+  --dh-bg-input:#191722;
+  --dh-bg-hover:#262234;
+  --dh-bg-row-hover:#221f2d;
+  --dh-bg-row-selected:#272338;
 
-  --color-outline:var(--neutral-60);--color-outline-variant:var(--neutral-87);
+  --dh-border-hairline:#201c2b;
+  --dh-border-control:#2b2839;
+  --dh-border-button:#302c3f;
+  --dh-border-card:#241f2f;
+  --dh-border-card-hover:#3a3550;
+  --dh-border-tag:#322e42;
+  --dh-divider-line:#221e2d;
 
-  --color-success:#177A50;--color-on-success:#FFFFFF;
-  --color-success-container:#CFF0DE;--color-on-success-container:var(--green-10);
-  --color-warning:#8A6300;--color-on-warning:#FFFFFF;
-  --color-warning-container:var(--amber-90);--color-on-warning-container:var(--amber-10);
-  --color-error:#B3261E;--color-on-error:#FFFFFF;
-  --color-error-container:var(--red-90);--color-on-error-container:var(--red-20);
-  --color-neutral-status:var(--neutral-50);--color-on-neutral-status:#FFFFFF;
-  --color-neutral-status-container:var(--neutral-92);--color-on-neutral-status-container:var(--neutral-30);
+  --dh-text:#e6e2f2;
+  --dh-text-bright:#eeebf7;
+  --dh-text-secondary:#8f89a4;
+  --dh-text-tertiary:#807a94;
+  --dh-text-host:#7b7590;
+  --dh-text-action:#a49eb9;
+  --dh-text-muted:#6b6680;
+  --dh-text-faint:#565169;
+  --dh-text-dot:#4b4760;
+  --dh-text-back:#c4bfd6;
+  --dh-text-log-msg:#b5b0c8;
 
-  --material-thin:rgba(255,255,255,.66);--material-regular:rgba(250,250,252,.8);--material-thick:rgba(246,247,249,.93);
-  --material-hairline:rgba(0,0,0,.08);
-  --state-hover:rgba(0,0,0,.04);--state-press:rgba(0,0,0,.08);--state-selected:rgba(31,90,168,.10);--state-focus-ring:rgba(31,90,168,.5);
-  --scrim-alpha:.3;
-}}
-[data-theme="light"]{color-scheme:light;
-  --color-primary:var(--azure-40);--color-on-primary:#FFFFFF;--color-primary-container:var(--azure-90);--color-on-primary-container:var(--azure-10);
-  --color-secondary:var(--neutral-40);--color-on-secondary:#FFFFFF;--color-secondary-container:var(--neutral-92);--color-on-secondary-container:var(--neutral-20);
-  --color-surface:var(--neutral-99);--color-on-surface:#1A1C1F;--color-on-surface-variant:#5B6169;
-  --color-surface-dim:var(--neutral-92);--color-surface-bright:#FFFFFF;
-  --color-surface-container-lowest:#FFFFFF;--color-surface-container-low:var(--neutral-98);--color-surface-container:var(--neutral-96);--color-surface-container-high:var(--neutral-94);--color-surface-container-highest:var(--neutral-92);
-  --color-surface-tint:var(--azure-40);--color-inverse-surface:var(--neutral-17);--color-on-inverse-surface:var(--neutral-94);
-  --color-outline:var(--neutral-60);--color-outline-variant:var(--neutral-87);
-  --color-success:#177A50;--color-on-success:#FFFFFF;--color-success-container:#CFF0DE;--color-on-success-container:var(--green-10);
-  --color-warning:#8A6300;--color-on-warning:#FFFFFF;--color-warning-container:var(--amber-90);--color-on-warning-container:var(--amber-10);
-  --color-error:#B3261E;--color-on-error:#FFFFFF;--color-error-container:var(--red-90);--color-on-error-container:var(--red-20);
-  --color-neutral-status:var(--neutral-50);--color-on-neutral-status:#FFFFFF;--color-neutral-status-container:var(--neutral-92);--color-on-neutral-status-container:var(--neutral-30);
-  --material-thin:rgba(255,255,255,.66);--material-regular:rgba(250,250,252,.8);--material-thick:rgba(246,247,249,.93);
-  --material-hairline:rgba(0,0,0,.08);
-  --state-hover:rgba(0,0,0,.04);--state-press:rgba(0,0,0,.08);--state-selected:rgba(31,90,168,.10);--state-focus-ring:rgba(31,90,168,.5);
-  --scrim-alpha:.3;
-}
-[data-theme="dark"]{color-scheme:dark;
-  --color-primary:#E2E2E0;--color-on-primary:#17181A;--color-primary-container:#2A2C30;--color-on-primary-container:#E2E2E0;
-  --color-secondary:#9A9C99;--color-on-secondary:#17181A;--color-secondary-container:#2A2C30;--color-on-secondary-container:#E2E2E0;
-  --color-surface:#17181A;--color-on-surface:#E2E2E0;--color-on-surface-variant:#9A9C99;
-  --color-surface-dim:#131416;--color-surface-bright:#2A2C30;
-  --color-surface-container-lowest:#131416;--color-surface-container-low:#17181A;--color-surface-container:#1E1F22;--color-surface-container-high:#2A2C30;--color-surface-container-highest:#34363B;
-  --color-surface-tint:#E2E2E0;--color-inverse-surface:#E2E2E0;--color-on-inverse-surface:#17181A;
-  --color-outline:rgba(255,255,255,.1);--color-outline-variant:rgba(255,255,255,.07);
-  --color-success:#86B58F;--color-on-success:#0E0F10;--color-success-container:#1B2E22;--color-on-success-container:#A8D4B3;
-  --color-warning:#C9B072;--color-on-warning:#0E0F10;--color-warning-container:#332C1A;--color-on-warning-container:#E6D19C;
-  --color-error:#C98A72;--color-on-error:#0E0F10;--color-error-container:#332019;--color-on-error-container:#E7B7A4;
-  --color-neutral-status:#5B5D60;--color-on-neutral-status:#0E0F10;--color-neutral-status-container:#24262A;--color-on-neutral-status-container:#B9BBB7;
-  --material-thin:rgba(30,31,34,.62);--material-regular:rgba(19,20,22,.76);--material-thick:rgba(14,15,16,.9);
-  --material-hairline:rgba(255,255,255,.07);
-  --state-hover:rgba(255,255,255,.055);--state-press:rgba(255,255,255,.10);--state-selected:rgba(255,255,255,.12);--state-focus-ring:rgba(255,255,255,.4);
-  --scrim-alpha:.55;
+  --dh-accent:#a58cf5;
+  --dh-on-accent:#150f26;
+  --dh-accent-hover:#b9a4f8;
+  --dh-accent-tint-bg:rgba(165,140,245,0.12);
+  --dh-accent-tint-text:#cabdf3;
+  --dh-accent-focus:rgba(165,140,245,0.55);
+
+  --dh-status-running:#74cf9a;
+  --dh-status-starting:#dfb35c;
+  --dh-status-crashed:#ee8b78;
+  --dh-status-stopped:#5c5772;
+
+  --dh-alert-bg:rgba(238,139,120,0.08);
+  --dh-alert-bg-hover:rgba(238,139,120,0.14);
+  --dh-alert-border:rgba(238,139,120,0.22);
+  --dh-alert-text:#f0c3ba;
+  --dh-alert-badge-bg:rgba(238,139,120,0.16);
+  --dh-alert-badge-border:#ee8b78;
+  --dh-alert-badge-text:#f7b3a4;
+  --dh-flag-bg:rgba(238,139,120,0.09);
+  --dh-flag-border:rgba(238,139,120,0.2);
+
+  --dh-link:#b6a2f7;
+  --dh-link-hover:#d5c9fb;
+  --dh-docker-badge-border:rgba(164,158,185,0.3);
+  --dh-scrim:#0a0910;
+  --dh-scrollbar-thumb:#332f42;
+  --dh-placeholder:#6b6680;
+
+  /* ── surfaces ─────────────────────────────────────────────────────── */
+  --color-primary:var(--dh-accent);--color-on-primary:var(--dh-on-accent);
+  --color-primary-container:var(--dh-accent-tint-bg);--color-on-primary-container:var(--dh-accent-tint-text);
+  --color-secondary:var(--dh-text-action);--color-on-secondary:var(--dh-on-accent);
+  --color-secondary-container:var(--dh-border-card);--color-on-secondary-container:var(--dh-text-bright);
+
+  --color-surface:var(--dh-bg-app);--color-on-surface:var(--dh-text);--color-on-surface-variant:var(--dh-text-secondary);
+  --color-surface-dim:var(--dh-bg-rail-footer);--color-surface-bright:#34303f;
+  --color-surface-container-lowest:var(--dh-bg-rail);--color-surface-container-low:var(--dh-bg-input);--color-surface-container:var(--dh-bg-card);--color-surface-container-high:var(--dh-bg-hover);--color-surface-container-highest:#322e42;
+  --color-surface-tint:var(--dh-accent);
+  --color-inverse-surface:var(--dh-text);--color-on-inverse-surface:var(--dh-on-accent);
+
+  --color-outline:var(--dh-text-muted);--color-outline-variant:var(--dh-border-card);
+  --color-scrim:var(--dh-scrim);--color-shadow:#000;
+
+  /* ── status roles ────────────────────────────────────────────────── */
+  --color-success:var(--dh-status-running);--color-on-success:#0c1f14;
+  --color-success-container:#16301f;--color-on-success-container:#a8e0be;
+  --color-warning:var(--dh-status-starting);--color-on-warning:#2e2000;
+  --color-warning-container:#332c1a;--color-on-warning-container:#f0d19c;
+  --color-error:var(--dh-status-crashed);--color-on-error:#2e0f08;
+  --color-error-container:var(--dh-flag-bg);--color-on-error-container:var(--dh-alert-text);
+  --color-neutral-status:var(--dh-status-stopped);--color-on-neutral-status:#0e0f10;
+  --color-neutral-status-container:var(--dh-border-card);--color-on-neutral-status-container:var(--dh-text-action);
+
+  /* ── HIG materials — not depicted in the mockup (no glass elements);
+     kept as harmonious approximations for degraded-state chrome the
+     mockup doesn't model (reconnecting banner, toolbar blur). ────── */
+  --material-thin:rgba(28,26,37,.62);--material-regular:rgba(16,15,23,.78);--material-thick:rgba(12,11,18,.9);
+  --material-blur:20px;--material-blur-thick:36px;
+  --material-hairline:rgba(255,255,255,.08);
+  --state-hover:var(--dh-bg-hover);--state-press:rgba(255,255,255,.10);--state-selected:var(--dh-bg-row-selected);--state-focus-ring:var(--dh-accent-focus);
+  --scrim-alpha:.58;
 }
 /* semantic status aliases — process lifecycle maps onto the roles */
 :root{--status-running:var(--color-success);--status-running-container:var(--color-success-container);--status-on-running-container:var(--color-on-success-container);
@@ -110,4 +115,4 @@
 --status-crashed:var(--color-error);--status-crashed-container:var(--color-error-container);--status-on-crashed-container:var(--color-on-error-container);
 --status-stopped:var(--color-neutral-status);--status-stopped-container:var(--color-neutral-status-container);--status-on-stopped-container:var(--color-on-neutral-status-container);
 --text-primary:var(--color-on-surface);--text-secondary:var(--color-on-surface-variant);--text-tertiary:var(--color-outline);--text-accent:var(--color-primary);
---link-color:var(--color-primary);--link-hover:#FFFFFF}
+--link-color:var(--dh-link);--link-hover:var(--dh-link-hover)}

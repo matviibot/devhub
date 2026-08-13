@@ -168,7 +168,7 @@ export function listDirectory(rawPath?: string): { path: string; parent: string 
   try {
     entries = readdirSync(path, { withFileTypes: true })
       .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-      .map((e) => ({ name: e.name }))
+      .map((e) => ({ name: e.name, hasPackageJson: existsSync(join(path, e.name, "package.json")) }))
       .sort((a, b) => a.name.localeCompare(b.name));
   } catch (err) {
     error = (err as Error).message;

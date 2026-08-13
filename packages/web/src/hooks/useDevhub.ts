@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClientMessage, DetectedScript, DirectoryEntry, DiscoveredProject, ProjectMeta, ProjectRoot, ServerMessage, ServerSnapshot, UiState } from "@devhub/shared";
+import type { ClientMessage, DetectedScript, DirectoryEntry, DiscoveredProject, DockerContainerInfo, ProjectMeta, ProjectRoot, ServerMessage, ServerSnapshot, UiState } from "@devhub/shared";
 
 const RECONNECT_DELAY_MS = 1500;
 const EMPTY_UI_STATE: UiState = { ignoredDiscovered: [], collapsedGroups: [] };
@@ -30,6 +30,7 @@ export type ServerInput =
 
 export function useDevhub() {
   const [connected, setConnected] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [servers, setServers] = useState<ServerSnapshot[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +38,8 @@ export function useDevhub() {
   const [discovered, setDiscovered] = useState<DiscoveredProject[]>([]);
   const [uiState, setUiStateLocal] = useState<UiState>(EMPTY_UI_STATE);
   const [directoryListing, setDirectoryListing] = useState<DirectoryListing | null>(null);
+  const [containers, setContainers] = useState<DockerContainerInfo[]>([]);
+  const [containersFetchedAt, setContainersFetchedAt] = useState<number | null>(null);
   const [pendingServerActions, setPendingServerActions] = useState<Set<string>>(new Set());
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedRef = useRef<Set<string>>(new Set());
@@ -67,6 +70,7 @@ export function useDevhub() {
 
       ws.onopen = () => {
         setConnected(true);
+        setReconnectAttempt(0);
         for (const id of subscribedRef.current) send({ type: "subscribeLogs", id });
       };
 
@@ -160,12 +164,19 @@ export function useDevhub() {
           case "directoryListing":
             setDirectoryListing(msg);
             break;
+          case "containerList":
+            setContainers(msg.items);
+            setContainersFetchedAt(Date.now());
+            break;
         }
       };
 
       ws.onclose = () => {
         setConnected(false);
-        if (!cancelled) reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+        if (!cancelled) {
+          setReconnectAttempt((n) => n + 1);
+          reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+        }
       };
       ws.onerror = () => ws.close();
     }
@@ -235,11 +246,11 @@ export function useDevhub() {
   );
 
   const createProject = useCallback(
-    (name: string) => {
+    (name: string, roots: ProjectRoot[] = []) => {
       const tempId = `temp-${crypto.randomUUID()}`;
       pendingProjectNames.current.set(tempId, name);
-      setProjects((prev) => [...prev, { id: tempId, name, roots: [] }]);
-      send({ type: "createProject", name });
+      setProjects((prev) => [...prev, { id: tempId, name, roots }]);
+      send({ type: "createProject", name, roots });
       pendingTimers.current.set(
         tempId,
         setTimeout(() => {
@@ -257,6 +268,7 @@ export function useDevhub() {
 
   return {
     connected,
+    reconnectAttempt,
     projects,
     servers,
     error,
@@ -295,6 +307,18 @@ export function useDevhub() {
     track: (id: string) => send({ type: "track", id }),
     killChild: (pid: number, ownerServerId?: string) => withPendingAction(`child:${pid}`, { type: "killChild", pid, ownerServerId }),
     reorderProjects: (ids: string[]) => send({ type: "reorderProjects", ids }),
+    reorderServers: (projectId: string, ids: string[]) => send({ type: "reorderServers", projectId: resolveProjectId(projectId), ids }),
     listDirectory: (path?: string) => send({ type: "listDirectory", path }),
+    containers,
+    containersFetchedAt,
+    listContainers: () => send({ type: "listContainers" }),
+    revealPath: (path: string) => send({ type: "revealPath", path }),
+    /** Optimistic: flips the server's projectId locally right away (drag-drop
+     *  reassignment reads back from `servers` immediately) — the daemon's
+     *  next snapshot just confirms the same value. */
+    moveServer: (id: string, projectId: string) => {
+      setServers((prev) => prev.map((s) => (s.id === id ? { ...s, projectId } : s)));
+      send({ type: "moveServer", id, projectId });
+    },
   };
 }

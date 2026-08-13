@@ -1,8 +1,10 @@
+import { execFile } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { ClientMessage, DiscoveredProject, ServerMessage, UiState } from "@devhub/shared";
 import { detectScripts, listDirectory, resolveCwd } from "./config.js";
+import { scanDockerContainers } from "./externalScan.js";
 import type { ProcessManager } from "./processManager.js";
 import type { ProjectStore } from "./projectStore.js";
 import { serveStatic } from "./staticServer.js";
@@ -89,7 +91,7 @@ export function createServer(pm: ProcessManager, store: ProjectStore, initialUiS
             client.subscribed.delete(msg.id);
             break;
           case "createProject":
-            store.createProject(msg.name);
+            store.createProject(msg.name, msg.roots);
             resync();
             break;
           case "updateProject":
@@ -148,11 +150,29 @@ export function createServer(pm: ProcessManager, store: ProjectStore, initialUiS
             store.reorderProjects(msg.ids);
             resync();
             break;
+          case "reorderServers":
+            store.reorderServers(msg.projectId, msg.ids);
+            resync();
+            break;
           case "listDirectory": {
             const result = listDirectory(msg.path);
             send(ws, { type: "directoryListing", ...result });
             break;
           }
+          case "listContainers":
+            scanDockerContainers()
+              .then((items) => send(ws, { type: "containerList", items }))
+              .catch((err) => send(ws, { type: "commandError", message: (err as Error).message }));
+            break;
+          case "moveServer":
+            store.moveServer(msg.id, msg.projectId);
+            resync();
+            break;
+          case "revealPath":
+            execFile("open", [resolveCwd(msg.path)], (err) => {
+              if (err) send(ws, { type: "commandError", message: `Couldn't open "${msg.path}": ${err.message}` });
+            });
+            break;
         }
       } catch (err) {
         send(ws, { type: "commandError", message: (err as Error).message });
