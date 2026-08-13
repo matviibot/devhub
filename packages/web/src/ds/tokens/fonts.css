@@ -1,6 +1,5 @@
-/* Webfonts. SF Pro / SF Mono are not redistributable, so DevHub ships the
-   closest Google Fonts equivalents: Inter (UI) and JetBrains Mono (code/logs).
-   If you have licensed SF binaries, drop them in assets/fonts/ and swap the
-   src below — the token names do not change. */
-@import url("https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..700;1,14..32,300..700&family=JetBrains+Mono:ital,wght@0,400..700;1,400..700&display=swap");
-:root{--font-ui:"Inter","SF Pro Text",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--font-mono:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--font-feature-ui:"cv05" 1,"cv08" 1,"ss03" 1;--font-feature-mono:"zero" 1,"ss02" 1}
+/* Webfonts. Instrument Sans (UI) and JetBrains Mono (code/logs), pulled from
+   Google Fonts. If you have licensed alternatives, drop them in assets/fonts/
+   and swap the src below — the token names do not change. */
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap");
+:root{--font-ui:"Instrument Sans","SF Pro Text",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--font-mono:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--font-feature-ui:"cv05" 1,"cv08" 1,"ss03" 1;--font-feature-mono:"zero" 1,"ss02" 1}

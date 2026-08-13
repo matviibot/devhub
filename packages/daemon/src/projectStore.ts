@@ -1,4 +1,4 @@
-import type { ProjectConfig, ProjectMeta, ServerConfig } from "@devhub/shared";
+import type { ProjectConfig, ProjectMeta, ProjectRoot, ServerConfig } from "@devhub/shared";
 import { resolveCwd, slugify, writeConfig } from "./config.js";
 import type { RuntimeServerConfig } from "./processManager.js";
 
@@ -22,11 +22,30 @@ export class ProjectStore {
   }
 
   metas(): ProjectMeta[] {
-    return this.projects.map((p) => ({ id: p.id, name: p.name }));
+    return this.projects.map((p) => ({ id: p.id, name: p.name, roots: p.roots }));
   }
 
   project(id: string): ProjectConfig | undefined {
     return this.projects.find((p) => p.id === id);
+  }
+
+  /** Finds the project whose root most specifically contains `absoluteCwd`
+   *  (exact match or nested subdirectory) — the longest matching root wins
+   *  when more than one project's root would otherwise match, so a nested
+   *  root in one project beats a shallower ancestor root in another. */
+  findRootMatch(absoluteCwd: string): string | null {
+    let bestProjectId: string | null = null;
+    let bestLength = -1;
+    for (const p of this.projects) {
+      for (const r of p.roots) {
+        const root = resolveCwd(r.path).replace(/\/$/, "");
+        if ((absoluteCwd === root || absoluteCwd.startsWith(`${root}/`)) && root.length > bestLength) {
+          bestLength = root.length;
+          bestProjectId = p.id;
+        }
+      }
+    }
+    return bestProjectId;
   }
 
   flatten(): RuntimeServerConfig[] {
@@ -59,18 +78,19 @@ export class ProjectStore {
     name = name.trim();
     if (!name) throw new Error("Project name is required");
     const id = this.uniqueId(name, new Set(this.projects.map((p) => p.id)));
-    const project: ProjectConfig = { id, name, servers: [] };
+    const project: ProjectConfig = { id, name, roots: [], servers: [] };
     this.projects.push(project);
     this.persist();
     return project;
   }
 
-  updateProject(id: string, name: string): ProjectConfig {
+  updateProject(id: string, name: string, roots: ProjectRoot[]): ProjectConfig {
     const p = this.project(id);
     if (!p) throw new Error("Project not found");
     name = name.trim();
     if (!name) throw new Error("Project name is required");
     p.name = name;
+    p.roots = roots.map((r) => ({ ...r, path: r.path.trim() })).filter((r) => r.path);
     this.persist();
     return p;
   }
@@ -135,17 +155,6 @@ export class ProjectStore {
       throw new Error("reorderProjects: ids must be exactly the current project ids");
     }
     this.projects = ids.map((id) => byId.get(id)!);
-    this.persist();
-  }
-
-  reorderServers(projectId: string, ids: string[]) {
-    const p = this.project(projectId);
-    if (!p) throw new Error("Project not found");
-    const byId = new Map(p.servers.map((s) => [s.id, s]));
-    if (ids.length !== byId.size || ids.some((id) => !byId.has(id))) {
-      throw new Error("reorderServers: ids must be exactly the project's current server ids");
-    }
-    p.servers = ids.map((id) => byId.get(id)!);
     this.persist();
   }
 }

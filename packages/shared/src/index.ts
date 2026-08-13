@@ -29,9 +29,20 @@ export interface DockerServerConfig extends ServerConfigBase {
 
 export type ServerConfig = ProcessServerConfig | DockerServerConfig;
 
+/** A filesystem location that belongs to a project — a matching aid for
+ *  discovery (fold anything found under here into this project), not a
+ *  constraint on where any particular server actually runs. */
+export interface ProjectRoot {
+  id: string;
+  /** Absolute or ~-relative path. */
+  path: string;
+  label?: string;
+}
+
 export interface ProjectConfig {
   id: string;
   name: string;
+  roots: ProjectRoot[];
   servers: ServerConfig[];
 }
 
@@ -40,6 +51,7 @@ export interface ProjectConfig {
 export interface ProjectMeta {
   id: string;
   name: string;
+  roots: ProjectRoot[];
 }
 
 export interface ServerState {
@@ -53,6 +65,20 @@ export interface ServerState {
   /** True while "running" backs onto a process devhub adopted rather than
    *  spawned itself — no log capture until it's restarted under devhub. */
   external: boolean;
+  /** Descendants of this server's own pid that have opened their own
+   *  listening socket — e.g. a single `pnpm dev` fanning out into several
+   *  per-workspace dev servers. Detected by process ancestry, not
+   *  configured, so there's nothing to start/stop/persist per child. */
+  children: ChildProcess[];
+}
+
+/** A descendant process of a running server that's opened its own listening
+ *  socket, surfaced read-only under the parent server row. */
+export interface ChildProcess {
+  pid: number;
+  port: number;
+  cwd: string;
+  name: string;
 }
 
 export interface DetectedExternal {
@@ -141,7 +167,7 @@ export type ClientMessage =
   | { type: "subscribeLogs"; id: string }
   | { type: "unsubscribeLogs"; id: string }
   | { type: "createProject"; name: string }
-  | { type: "updateProject"; id: string; name: string }
+  | { type: "updateProject"; id: string; name: string; roots: ProjectRoot[] }
   | { type: "deleteProject"; id: string }
   | { type: "createServer"; projectId: string; name: string; kind: "process"; command: string; cwd: string; port?: number }
   | { type: "createServer"; projectId: string; name: string; kind: "docker"; container: string; port?: number }
@@ -150,9 +176,9 @@ export type ClientMessage =
   | { type: "deleteServer"; id: string }
   | { type: "detectScripts"; cwd: string }
   | { type: "track"; id: string }
+  | { type: "killChild"; pid: number; ownerServerId?: string }
   | { type: "setUiState"; state: UiState }
   | { type: "reorderProjects"; ids: string[] }
-  | { type: "reorderServers"; projectId: string; ids: string[] }
   | { type: "listDirectory"; path?: string };
 
 // ---- Daemon -> Client ----

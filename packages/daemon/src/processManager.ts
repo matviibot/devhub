@@ -3,7 +3,7 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child
 import { promisify } from "node:util";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
-import type { DetectedExternal, ProcessStatus, ServerSnapshot, ServerState } from "@devhub/shared";
+import type { ChildProcess, DetectedExternal, ProcessStatus, ServerSnapshot, ServerState } from "@devhub/shared";
 import { processGroupId, processStartedAt, type DockerInspectState } from "./externalScan.js";
 
 const execFileAsync = promisify(execFile);
@@ -118,6 +118,7 @@ export class ProcessManager extends EventEmitter {
         exitCode: null,
         restartCount: 0,
         external: false,
+        children: [],
       },
       logs: [],
       lineBuffer: "",
@@ -196,29 +197,42 @@ export class ProcessManager extends EventEmitter {
     return out;
   }
 
-  /** Called by the periodic external-process scan with its latest findings. */
-  setDetected(matches: Map<string, DetectedExternal>) {
+  /** Called by the periodic external-process scan with its latest findings.
+   *  A match means something's already listening at a stopped configured
+   *  server's cwd — auto-adopt it straight away rather than merely flagging
+   *  a manual "Track" affordance, so already-running sibling processes (e.g.
+   *  everything a single `pnpm dev` fans out) come up green with no click. */
+  async setDetected(matches: Map<string, DetectedExternal>) {
     for (const rt of this.runtimes.values()) {
       if (rt.config.kind !== "process" || rt.state.status !== "stopped" || rt.externalPid) continue;
       const match = matches.get(rt.config.id) ?? null;
-      const prev = rt.detected;
-      const changed = (prev?.pid ?? null) !== (match?.pid ?? null) || (prev?.port ?? null) !== (match?.port ?? null);
-      rt.detected = match;
-      if (changed) this.emitUpdate(rt.config.id);
+      if (!match) {
+        if (rt.detected) {
+          rt.detected = null;
+          this.emitUpdate(rt.config.id);
+        }
+        continue;
+      }
+      if (await this.adopt(rt.config.id, match.pid, match.port)) {
+        this.logNote(rt.config.id, `[devhub] auto-tracking already-running process (pid ${match.pid}) — restart to begin capturing its output`);
+      }
     }
   }
 
-  /** Adopts a previously-detected external process — re-verifies it's still
-   *  alive right before committing, since the periodic scan can be stale. */
-  async track(id: string) {
+  /** Core of adopting an already-running external process as this server's
+   *  backing pid — re-verifies it's still alive right before committing,
+   *  since scan results (whether `detected` or a discovery-fold match) can
+   *  be a few seconds stale. Shared by `track` (user clicked "Track" on a
+   *  scan-detected match) and `adoptKnown` (discovery fold already knows the
+   *  pid from the same tick, so it skips the detected round-trip). */
+  private async adopt(id: string, pid: number, port: number): Promise<boolean> {
     const rt = this.runtimes.get(id);
-    if (!rt || rt.pty || rt.externalPid || !rt.detected) return;
-    const { pid, port } = rt.detected;
+    if (!rt || rt.pty || rt.externalPid) return false;
     const startedAt = await processStartedAt(pid);
     if (startedAt == null) {
       rt.detected = null;
       this.emitUpdate(id);
-      return;
+      return false;
     }
     rt.externalPid = pid;
     rt.detected = null;
@@ -227,8 +241,29 @@ export class ProcessManager extends EventEmitter {
     rt.state.port = port;
     rt.state.startedAt = startedAt;
     rt.state.external = true;
-    this.logNote(id, `[devhub] tracking already-running process (pid ${pid}) — restart to begin capturing its output`);
     this.emitUpdate(id);
+    return true;
+  }
+
+  /** Adopts a previously-detected external process. */
+  async track(id: string) {
+    const rt = this.runtimes.get(id);
+    if (!rt || !rt.detected) return;
+    const { pid, port } = rt.detected;
+    if (await this.adopt(id, pid, port)) {
+      this.logNote(id, `[devhub] tracking already-running process (pid ${pid}) — restart to begin capturing its output`);
+    }
+  }
+
+  /** Adopts a server whose backing pid is already known — used right after
+   *  a discovery fold creates a brand-new server for a process that was
+   *  found already running under a project's root, so it comes up "running"
+   *  immediately instead of sitting "stopped" until the next scan tick
+   *  re-detects it and someone clicks Track. */
+  async adoptKnown(id: string, pid: number, port: number) {
+    if (await this.adopt(id, pid, port)) {
+      this.logNote(id, `[devhub] auto-tracking already-running process (pid ${pid}) — restart to begin capturing its output`);
+    }
   }
 
   start(id: string) {
@@ -245,6 +280,7 @@ export class ProcessManager extends EventEmitter {
     rt.state.exitCode = null;
     rt.state.port = rt.config.port ?? null;
     rt.state.external = false;
+    rt.state.children = [];
     rt.logs = [];
     rt.lineBuffer = "";
     this.emitUpdate(id);
@@ -324,6 +360,35 @@ export class ProcessManager extends EventEmitter {
 
   stopProject(projectId: string) {
     for (const rt of this.runtimes.values()) if (rt.config.projectId === projectId) this.stop(rt.config.id);
+  }
+
+  /** Running process-kind servers with a real backing pid (devhub-spawned
+   *  pty, or a previously-adopted external pid) — candidates for the
+   *  child-process-tree scan; stopped/docker runtimes have no pid to walk
+   *  descendants from. */
+  runningRootPids(): { id: string; pid: number }[] {
+    const out: { id: string; pid: number }[] = [];
+    for (const rt of this.runtimes.values()) {
+      if (rt.config.kind !== "process") continue;
+      const pid = rt.pty?.pid ?? rt.externalPid;
+      if (pid) out.push({ id: rt.config.id, pid });
+    }
+    return out;
+  }
+
+  /** Called by the periodic scan with each running server's freshly
+   *  detected descendant listening processes (see externalScan.ts's
+   *  findChildServers). */
+  setChildren(childMap: Map<string, ChildProcess[]>) {
+    for (const rt of this.runtimes.values()) {
+      if (rt.config.kind !== "process") continue;
+      const next = childMap.get(rt.config.id) ?? [];
+      const prev = rt.state.children;
+      const changed = prev.length !== next.length || prev.some((c, i) => c.pid !== next[i]?.pid || c.port !== next[i]?.port);
+      if (!changed) continue;
+      rt.state.children = next;
+      this.emitUpdate(rt.config.id);
+    }
   }
 
   /** All docker-kind runtimes, for the periodic reconcile scan. */
@@ -454,6 +519,22 @@ export class ProcessManager extends EventEmitter {
     rt.dockerLogProc = null;
   }
 
+  /** Signals a single descendant pid directly (not its process group) —
+   *  stops one detected child of a running server (see findChildServers)
+   *  without touching its siblings or the parent that spawned it.
+   *  Best-effort: if that child had spawned grandchildren of its own, those
+   *  aren't followed, and the parent may notice the exit and respawn it
+   *  depending on how it supervises its own children — devhub has no
+   *  visibility into that either way. */
+  async killChild(pid: number, ownerServerId?: string) {
+    this.signalExternal(pid, null, "SIGTERM");
+    if (!(await this.waitForExit(pid, KILL_GRACE_MS))) {
+      this.signalExternal(pid, null, "SIGKILL");
+      await this.waitForExit(pid, 1000);
+    }
+    if (ownerServerId) this.logNote(ownerServerId, `[devhub] stopped child process (pid ${pid})`);
+  }
+
   /** Stops an adopted (non-pty) process: re-verifies it's still the same
    *  instance we tracked (guards against pid reuse), signals its whole
    *  process group so shell-spawned children don't get orphaned, and waits
@@ -510,6 +591,7 @@ export class ProcessManager extends EventEmitter {
     rt.state.pid = null;
     rt.state.status = "stopped";
     rt.state.external = false;
+    rt.state.children = [];
     if (rt.config.port === undefined) rt.state.port = null;
     this.emitUpdate(rt.config.id);
   }
@@ -569,6 +651,7 @@ export class ProcessManager extends EventEmitter {
     rt.state.exitCode = exitCode;
     rt.state.status = rt.explicitStop || exitCode === 0 ? "stopped" : "crashed";
     if (rt.state.status === "stopped" && rt.config.port === undefined) rt.state.port = null;
+    rt.state.children = [];
     this.emitUpdate(id);
     this.emit(`exited:${id}`);
   }

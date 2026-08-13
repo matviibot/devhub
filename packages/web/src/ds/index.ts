@@ -2,6 +2,8 @@ export { Icon } from "./Icon";
 export { Button } from "./Button";
 export { IconButton } from "./IconButton";
 export { StatusDot, STATUS_ROLES } from "./StatusDot";
+export { StatusBadge } from "./StatusBadge";
+export { Tabs, type TabItem } from "./Tabs";
 export { GroupHeader } from "./GroupHeader";
 export { SidebarRow } from "./SidebarRow";
 export { EmptyState } from "./EmptyState";

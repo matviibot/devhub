@@ -93,7 +93,7 @@ export function createServer(pm: ProcessManager, store: ProjectStore, initialUiS
             resync();
             break;
           case "updateProject":
-            store.updateProject(msg.id, msg.name);
+            store.updateProject(msg.id, msg.name, msg.roots);
             resync();
             break;
           case "deleteProject":
@@ -136,6 +136,9 @@ export function createServer(pm: ProcessManager, store: ProjectStore, initialUiS
           case "track":
             pm.track(msg.id).catch((err) => send(ws, { type: "commandError", message: (err as Error).message }));
             break;
+          case "killChild":
+            pm.killChild(msg.pid, msg.ownerServerId).catch((err) => send(ws, { type: "commandError", message: (err as Error).message }));
+            break;
           case "setUiState":
             uiState = msg.state;
             writeUiState(uiState);
@@ -143,10 +146,6 @@ export function createServer(pm: ProcessManager, store: ProjectStore, initialUiS
             break;
           case "reorderProjects":
             store.reorderProjects(msg.ids);
-            resync();
-            break;
-          case "reorderServers":
-            store.reorderServers(msg.projectId, msg.ids);
             resync();
             break;
           case "listDirectory": {

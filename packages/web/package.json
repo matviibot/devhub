@@ -12,6 +12,7 @@
     "@devhub/shared": "*",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "framer-motion": "^13.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

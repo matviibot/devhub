@@ -10,35 +10,35 @@
   --amber-90:#FFE2A8;--amber-70:#F2C572;--amber-50:#C99422;--amber-35:#7A5A00;--amber-30:#65490A;--amber-20:#4A3500;--amber-10:#2E2000;
   --red-90:#FFDAD6;--red-70:#FFB4AB;--red-50:#E5544A;--red-40:#C4372E;--red-30:#93000A;--red-20:#690005;--red-10:#410002;
 
-  /* ── M3 color roles: dark (default) ─────────────────────────────── */
-  --color-primary:var(--azure-70);--color-on-primary:var(--azure-20);
-  --color-primary-container:var(--azure-30);--color-on-primary-container:var(--azure-90);
-  --color-secondary:var(--neutral-80);--color-on-secondary:var(--neutral-20);
-  --color-secondary-container:var(--neutral-25);--color-on-secondary-container:var(--neutral-92);
+  /* ── M3 color roles: dark (default) — devhub neutral palette ────── */
+  --color-primary:#E2E2E0;--color-on-primary:#17181A;
+  --color-primary-container:#2A2C30;--color-on-primary-container:#E2E2E0;
+  --color-secondary:#9A9C99;--color-on-secondary:#17181A;
+  --color-secondary-container:#2A2C30;--color-on-secondary-container:#E2E2E0;
 
-  --color-surface:var(--neutral-10);--color-on-surface:#E7E9EC;--color-on-surface-variant:#A3AAB2;
-  --color-surface-dim:var(--neutral-6);--color-surface-bright:var(--neutral-22);
-  --color-surface-container-lowest:var(--neutral-6);--color-surface-container-low:var(--neutral-12);--color-surface-container:var(--neutral-15);--color-surface-container-high:var(--neutral-20);--color-surface-container-highest:var(--neutral-25);
-  --color-surface-tint:var(--azure-70);
-  --color-inverse-surface:var(--neutral-92);--color-on-inverse-surface:var(--neutral-15);
+  --color-surface:#17181A;--color-on-surface:#E2E2E0;--color-on-surface-variant:#9A9C99;
+  --color-surface-dim:#131416;--color-surface-bright:#2A2C30;
+  --color-surface-container-lowest:#131416;--color-surface-container-low:#17181A;--color-surface-container:#1E1F22;--color-surface-container-high:#2A2C30;--color-surface-container-highest:#34363B;
+  --color-surface-tint:#E2E2E0;
+  --color-inverse-surface:#E2E2E0;--color-on-inverse-surface:#17181A;
 
-  --color-outline:var(--neutral-40);--color-outline-variant:var(--neutral-22);
+  --color-outline:rgba(255,255,255,.1);--color-outline-variant:rgba(255,255,255,.07);
   --color-scrim:#000;--color-shadow:#000;
 
-  --color-success:var(--green-70);--color-on-success:var(--green-10);
-  --color-success-container:var(--green-20);--color-on-success-container:var(--green-90);
-  --color-warning:var(--amber-70);--color-on-warning:var(--amber-10);
-  --color-warning-container:var(--amber-20);--color-on-warning-container:var(--amber-90);
-  --color-error:var(--red-70);--color-on-error:var(--red-20);
-  --color-error-container:var(--red-30);--color-on-error-container:var(--red-90);
-  --color-neutral-status:var(--neutral-60);--color-on-neutral-status:var(--neutral-10);
-  --color-neutral-status-container:var(--neutral-22);--color-on-neutral-status-container:var(--neutral-87);
+  --color-success:#86B58F;--color-on-success:#0E0F10;
+  --color-success-container:#1B2E22;--color-on-success-container:#A8D4B3;
+  --color-warning:#C9B072;--color-on-warning:#0E0F10;
+  --color-warning-container:#332C1A;--color-on-warning-container:#E6D19C;
+  --color-error:#C98A72;--color-on-error:#0E0F10;
+  --color-error-container:#332019;--color-on-error-container:#E7B7A4;
+  --color-neutral-status:#5B5D60;--color-on-neutral-status:#0E0F10;
+  --color-neutral-status-container:#24262A;--color-on-neutral-status-container:#B9BBB7;
 
   /* HIG materials — layered translucency instead of hard borders */
-  --material-thin:rgba(30,34,39,.62);--material-regular:rgba(22,25,29,.76);--material-thick:rgba(14,16,19,.9);
+  --material-thin:rgba(30,31,34,.62);--material-regular:rgba(19,20,22,.76);--material-thick:rgba(14,15,16,.9);
   --material-blur:20px;--material-blur-thick:36px;
   --material-hairline:rgba(255,255,255,.07);
-  --state-hover:rgba(255,255,255,.055);--state-press:rgba(255,255,255,.10);--state-selected:rgba(127,178,255,.14);--state-focus-ring:rgba(127,178,255,.55);
+  --state-hover:rgba(255,255,255,.055);--state-press:rgba(255,255,255,.10);--state-selected:rgba(255,255,255,.12);--state-focus-ring:rgba(255,255,255,.4);
   --scrim-alpha:.55;
   color-scheme:dark;
 }
@@ -88,20 +88,20 @@
   --scrim-alpha:.3;
 }
 [data-theme="dark"]{color-scheme:dark;
-  --color-primary:var(--azure-70);--color-on-primary:var(--azure-20);--color-primary-container:var(--azure-30);--color-on-primary-container:var(--azure-90);
-  --color-secondary:var(--neutral-80);--color-on-secondary:var(--neutral-20);--color-secondary-container:var(--neutral-25);--color-on-secondary-container:var(--neutral-92);
-  --color-surface:var(--neutral-10);--color-on-surface:#E7E9EC;--color-on-surface-variant:#A3AAB2;
-  --color-surface-dim:var(--neutral-6);--color-surface-bright:var(--neutral-22);
-  --color-surface-container-lowest:var(--neutral-6);--color-surface-container-low:var(--neutral-12);--color-surface-container:var(--neutral-15);--color-surface-container-high:var(--neutral-20);--color-surface-container-highest:var(--neutral-25);
-  --color-surface-tint:var(--azure-70);--color-inverse-surface:var(--neutral-92);--color-on-inverse-surface:var(--neutral-15);
-  --color-outline:var(--neutral-40);--color-outline-variant:var(--neutral-22);
-  --color-success:var(--green-70);--color-on-success:var(--green-10);--color-success-container:var(--green-20);--color-on-success-container:var(--green-90);
-  --color-warning:var(--amber-70);--color-on-warning:var(--amber-10);--color-warning-container:var(--amber-20);--color-on-warning-container:var(--amber-90);
-  --color-error:var(--red-70);--color-on-error:var(--red-20);--color-error-container:var(--red-30);--color-on-error-container:var(--red-90);
-  --color-neutral-status:var(--neutral-60);--color-on-neutral-status:var(--neutral-10);--color-neutral-status-container:var(--neutral-22);--color-on-neutral-status-container:var(--neutral-87);
-  --material-thin:rgba(30,34,39,.62);--material-regular:rgba(22,25,29,.76);--material-thick:rgba(14,16,19,.9);
+  --color-primary:#E2E2E0;--color-on-primary:#17181A;--color-primary-container:#2A2C30;--color-on-primary-container:#E2E2E0;
+  --color-secondary:#9A9C99;--color-on-secondary:#17181A;--color-secondary-container:#2A2C30;--color-on-secondary-container:#E2E2E0;
+  --color-surface:#17181A;--color-on-surface:#E2E2E0;--color-on-surface-variant:#9A9C99;
+  --color-surface-dim:#131416;--color-surface-bright:#2A2C30;
+  --color-surface-container-lowest:#131416;--color-surface-container-low:#17181A;--color-surface-container:#1E1F22;--color-surface-container-high:#2A2C30;--color-surface-container-highest:#34363B;
+  --color-surface-tint:#E2E2E0;--color-inverse-surface:#E2E2E0;--color-on-inverse-surface:#17181A;
+  --color-outline:rgba(255,255,255,.1);--color-outline-variant:rgba(255,255,255,.07);
+  --color-success:#86B58F;--color-on-success:#0E0F10;--color-success-container:#1B2E22;--color-on-success-container:#A8D4B3;
+  --color-warning:#C9B072;--color-on-warning:#0E0F10;--color-warning-container:#332C1A;--color-on-warning-container:#E6D19C;
+  --color-error:#C98A72;--color-on-error:#0E0F10;--color-error-container:#332019;--color-on-error-container:#E7B7A4;
+  --color-neutral-status:#5B5D60;--color-on-neutral-status:#0E0F10;--color-neutral-status-container:#24262A;--color-on-neutral-status-container:#B9BBB7;
+  --material-thin:rgba(30,31,34,.62);--material-regular:rgba(19,20,22,.76);--material-thick:rgba(14,15,16,.9);
   --material-hairline:rgba(255,255,255,.07);
-  --state-hover:rgba(255,255,255,.055);--state-press:rgba(255,255,255,.10);--state-selected:rgba(127,178,255,.14);--state-focus-ring:rgba(127,178,255,.55);
+  --state-hover:rgba(255,255,255,.055);--state-press:rgba(255,255,255,.10);--state-selected:rgba(255,255,255,.12);--state-focus-ring:rgba(255,255,255,.4);
   --scrim-alpha:.55;
 }
 /* semantic status aliases — process lifecycle maps onto the roles */
@@ -110,4 +110,4 @@
 --status-crashed:var(--color-error);--status-crashed-container:var(--color-error-container);--status-on-crashed-container:var(--color-on-error-container);
 --status-stopped:var(--color-neutral-status);--status-stopped-container:var(--color-neutral-status-container);--status-on-stopped-container:var(--color-on-neutral-status-container);
 --text-primary:var(--color-on-surface);--text-secondary:var(--color-on-surface-variant);--text-tertiary:var(--color-outline);--text-accent:var(--color-primary);
---link-color:var(--color-primary);--link-hover:var(--azure-80)}
+--link-color:var(--color-primary);--link-hover:#FFFFFF}

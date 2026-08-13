@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import chokidar from "chokidar";
-import type { DetectedScript, DirectoryEntry, ProjectConfig, ServerConfig } from "@devhub/shared";
+import type { DetectedScript, DirectoryEntry, ProjectConfig, ProjectRoot, ServerConfig } from "@devhub/shared";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -21,11 +21,17 @@ interface RawServer {
   dir?: string;
   port?: number;
 }
+interface RawRoot {
+  id?: string;
+  path: string;
+  label?: string;
+}
 interface RawProject {
   id?: string;
   name: string;
-  /** @deprecated legacy field — projects no longer have a shared root */
+  /** @deprecated legacy field — projects no longer have a single shared root */
   root?: string;
+  roots?: RawRoot[];
   servers?: RawServer[];
 }
 interface RawConfigFile {
@@ -78,6 +84,10 @@ export function parseConfig(raw: string): ProjectConfig[] {
     }
     seenProjectIds.add(projectId);
 
+    const roots: ProjectRoot[] = (p.roots ?? [])
+      .map((r) => ({ id: r.id ?? crypto.randomUUID(), path: r.path, ...(r.label ? { label: r.label } : {}) }))
+      .filter((r) => r.path.trim());
+
     const servers: ServerConfig[] = (p.servers ?? []).map((s) => {
       if (!s.name) {
         throw new Error(`Server entry missing required field "name" in project "${p.name}": ${JSON.stringify(s)}`);
@@ -115,7 +125,7 @@ export function parseConfig(raw: string): ProjectConfig[] {
       return { id: serverId, name: s.name, kind: "process" as const, command: s.command, cwd, port: s.port };
     });
 
-    return { id: projectId, name: p.name, servers };
+    return { id: projectId, name: p.name, roots, servers };
   });
 
   if (migrated) console.log("[devhub] migrated legacy config shape (root/dir fields, kind-less servers) — will be rewritten on next save");
@@ -133,6 +143,7 @@ export function writeConfig(projects: ProjectConfig[], path: string = CONFIG_PAT
     projects: projects.map((p) => ({
       id: p.id,
       name: p.name,
+      ...(p.roots.length ? { roots: p.roots } : {}),
       servers: p.servers.map((s) => {
         const port = s.port ? { port: s.port } : {};
         return s.kind === "docker"
@@ -207,4 +218,14 @@ export function detectScripts(absoluteDir: string): { scripts: DetectedScript[];
     .map((name) => ({ name, command: `${runner} ${name}` }));
 
   return { scripts, hasPackageJson: true };
+}
+
+/** Best-effort dev command for a directory being auto-folded into a project
+ *  from discovery, where the daemon only knows the cwd/port of an already-
+ *  running process, not the real command line that started it — prefers a
+ *  script literally named "dev", then "start", then whatever's first. */
+export function guessDevCommand(absoluteDir: string): string {
+  const { scripts } = detectScripts(absoluteDir);
+  const byName = (name: string) => scripts.find((s) => s.name === name);
+  return (byName("dev") ?? byName("start") ?? scripts[0])?.command ?? "npm start";
 }

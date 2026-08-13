@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClientMessage, DetectedScript, DirectoryEntry, DiscoveredProject, ProjectMeta, ServerMessage, ServerSnapshot, UiState } from "@devhub/shared";
+import type { ClientMessage, DetectedScript, DirectoryEntry, DiscoveredProject, ProjectMeta, ProjectRoot, ServerMessage, ServerSnapshot, UiState } from "@devhub/shared";
 
 const RECONNECT_DELAY_MS = 1500;
 const EMPTY_UI_STATE: UiState = { ignoredDiscovered: [], collapsedGroups: [] };
@@ -89,7 +89,7 @@ export function useDevhub() {
                 clearTimeout(pendingTimers.current.get(tempId));
                 pendingTimers.current.delete(tempId);
               } else {
-                stillPending.push({ id: tempId, name });
+                stillPending.push({ id: tempId, name, roots: [] });
               }
             }
             setProjects(stillPending.length ? [...msg.projects, ...stillPending] : msg.projects);
@@ -238,7 +238,7 @@ export function useDevhub() {
     (name: string) => {
       const tempId = `temp-${crypto.randomUUID()}`;
       pendingProjectNames.current.set(tempId, name);
-      setProjects((prev) => [...prev, { id: tempId, name }]);
+      setProjects((prev) => [...prev, { id: tempId, name, roots: [] }]);
       send({ type: "createProject", name });
       pendingTimers.current.set(
         tempId,
@@ -274,7 +274,7 @@ export function useDevhub() {
     startProject: (projectId: string) => send({ type: "startProject", projectId }),
     stopProject: (projectId: string) => send({ type: "stopProject", projectId }),
     createProject,
-    updateProject: (id: string, name: string) => send({ type: "updateProject", id, name }),
+    updateProject: (id: string, name: string, roots: ProjectRoot[]) => send({ type: "updateProject", id, name, roots }),
     deleteProject: (id: string) => send({ type: "deleteProject", id }),
     createServer: (projectId: string, input: ServerInput) => {
       const id = resolveProjectId(projectId);
@@ -293,8 +293,8 @@ export function useDevhub() {
     deleteServer: (id: string) => send({ type: "deleteServer", id }),
     detectScripts: (cwd: string) => send({ type: "detectScripts", cwd }),
     track: (id: string) => send({ type: "track", id }),
+    killChild: (pid: number, ownerServerId?: string) => withPendingAction(`child:${pid}`, { type: "killChild", pid, ownerServerId }),
     reorderProjects: (ids: string[]) => send({ type: "reorderProjects", ids }),
-    reorderServers: (projectId: string, ids: string[]) => send({ type: "reorderServers", projectId, ids }),
     listDirectory: (path?: string) => send({ type: "listDirectory", path }),
   };
 }

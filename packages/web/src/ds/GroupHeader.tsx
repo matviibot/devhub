@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import { useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 import { Icon } from "./Icon";
 
 interface Props {
@@ -6,15 +6,15 @@ interface Props {
   count?: number;
   collapsed?: boolean;
   onToggle?: () => void;
+  /** Extra content rendered right after the count, before the flex spacer —
+   *  e.g. an attention badge and summary line. */
+  extra?: ReactNode;
   actions?: ReactNode;
   sticky?: boolean;
   style?: CSSProperties;
-  /** Presence makes the header draggable (a grip handle appears on hover). */
-  onDragStart?: (e: DragEvent<HTMLDivElement>) => void;
-  onDragOver?: (e: DragEvent<HTMLDivElement>) => void;
-  onDrop?: (e: DragEvent<HTMLDivElement>) => void;
-  onDragEnd?: () => void;
-  dragging?: boolean;
+  /** Presence renders a grip handle (visible on hover) that starts a
+   *  framer-motion Reorder drag on pointerdown — pass `dragControls.start`. */
+  onDragHandlePointerDown?: (e: PointerEvent<HTMLSpanElement>) => void;
 }
 
 /** Collapsible section header for a group of sidebar rows. */
@@ -23,18 +23,14 @@ export function GroupHeader({
   count,
   collapsed = false,
   onToggle,
+  extra,
   actions,
   sticky = false,
   style,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
-  dragging = false,
+  onDragHandlePointerDown,
   ...rest
 }: Props) {
   const [hover, setHover] = useState(false);
-  const draggable = !!onDragStart;
   return (
     <div
       role="button"
@@ -43,11 +39,6 @@ export function GroupHeader({
       onClick={onToggle}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      onDragEnd={onDragEnd}
       style={{
         display: "flex",
         alignItems: "center",
@@ -63,18 +54,25 @@ export function GroupHeader({
         cursor: "default",
         userSelect: "none",
         outline: "none",
-        opacity: dragging ? 0.4 : 1,
         ...style,
       }}
       {...rest}
     >
-      {draggable && (
-        <Icon
-          name="grip-vertical"
-          size={12}
-          color="var(--color-outline)"
-          style={{ opacity: hover ? 1 : 0, transition: "opacity var(--duration-fast) var(--ease-standard)", cursor: "grab" }}
-        />
+      {onDragHandlePointerDown && (
+        <span
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onDragHandlePointerDown(e);
+          }}
+          style={{ display: "flex", touchAction: "none" }}
+        >
+          <Icon
+            name="grip-vertical"
+            size={12}
+            color="var(--color-outline)"
+            style={{ opacity: hover ? 1 : 0, transition: "opacity var(--duration-fast) var(--ease-standard)", cursor: "grab" }}
+          />
+        </span>
       )}
       <Icon
         name="chevron-down"
@@ -107,6 +105,7 @@ export function GroupHeader({
           {count}
         </span>
       ) : null}
+      {extra}
       <span style={{ flex: 1 }} />
       {actions ? (
         <span style={{ display: "flex", gap: 2, opacity: hover ? 1 : 0, transition: "opacity var(--duration-fast) var(--ease-standard)" }}>

@@ -3,4 +3,5 @@ dist/
 *.log
 .DS_Store
 devhub.config.json
+devhub.state.json
 *.tsbuildinfo

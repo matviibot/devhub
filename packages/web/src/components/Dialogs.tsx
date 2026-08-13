@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ProjectRoot } from "@devhub/shared";
 import { Button, Dialog, FolderBrowser, Icon, IconButton, TextField } from "../ds";
 import type { useDevhub, ServerInput } from "../hooks/useDevhub";
 import { tildify } from "../lib/paths";
@@ -53,11 +54,14 @@ interface Props {
   /** Called right before onClose after a delete-confirm actually deletes —
    *  the caller can offer an Undo toast from the snapshot. */
   onDeleted?: (snapshot: DeletedSnapshot) => void;
+  /** Called from the project-edit dialog's "Delete project" action — the
+   *  caller swaps in the delete-confirm dialog. */
+  onDeleteProject: (id: string) => void;
 }
 
 const DETECT_DEBOUNCE_MS = 300;
 
-export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted }: Props) {
+export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted, onDeleteProject }: Props) {
   const {
     projects,
     servers,
@@ -74,12 +78,16 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
   } = devhub;
 
   const [name, setName] = useState("");
+  const [roots, setRoots] = useState<ProjectRoot[]>([]);
   const [serverKind, setServerKind] = useState<"process" | "docker">("process");
   const [command, setCommand] = useState("");
   const [cwd, setCwd] = useState("");
   const [container, setContainer] = useState("");
   const [port, setPort] = useState("");
-  const [browsing, setBrowsing] = useState(false);
+  // What the shared FolderBrowser singleton is currently picking a folder
+  // for — the project dialog's root-picker and the server dialog's cwd-
+  // picker both reuse the one instance, just with a different onSelect.
+  const [browsingTarget, setBrowsingTarget] = useState<"cwd" | "root" | null>(null);
   const detectTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const dialogKey = dialog
@@ -94,11 +102,12 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
   const project = projectId ? projects.find((p) => p.id === projectId) : undefined;
 
   useEffect(() => {
-    setBrowsing(false);
+    setBrowsingTarget(null);
     if (!dialog) return;
     if (dialog.kind === "project") {
       const p = dialog.mode === "edit" ? projects.find((x) => x.id === dialog.projectId) : null;
       setName(p?.name ?? (dialog.mode === "add" ? (dialog.prefillName ?? "") : ""));
+      setRoots(p?.roots ?? []);
     } else if (dialog.kind === "server") {
       const s = dialog.mode === "edit" ? servers.find((x) => x.id === dialog.serverId) : null;
       setName(s?.name ?? (dialog.mode === "add" ? (dialog.prefillName ?? "") : ""));
@@ -130,9 +139,9 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
-        if (browsing) setBrowsing(false);
+        if (browsingTarget) setBrowsingTarget(null);
         else onClose();
-      } else if (e.key === "Enter" && !browsing && !(e as unknown as { isComposing?: boolean }).isComposing) {
+      } else if (e.key === "Enter" && !browsingTarget && !(e as unknown as { isComposing?: boolean }).isComposing) {
         const active = document.activeElement;
         if (active instanceof HTMLInputElement) {
           e.preventDefault();
@@ -142,7 +151,7 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dialog, name, serverKind, command, cwd, container, port, browsing]);
+  }, [dialog, name, roots, serverKind, command, cwd, container, port, browsingTarget]);
 
   if (!dialog) return null;
 
@@ -151,7 +160,7 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
     if (dialog.kind === "project") {
       if (!name.trim()) return;
       if (dialog.mode === "edit") {
-        updateProject(dialog.projectId, name);
+        updateProject(dialog.projectId, name, roots);
       } else {
         createProject(name);
         onChainToAddServer(name, {
@@ -206,27 +215,128 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
   if (dialog.kind === "project") {
     const editing = dialog.mode === "edit";
     return (
+      <>
       <Dialog
         icon={editing ? "folder-cog" : "folder-plus"}
         title={editing ? "Edit project" : "New project"}
         width="360px"
         onClose={onClose}
-        footer={<DialogFooter onClose={onClose} onSubmit={submit} disabled={!name.trim()} label={editing ? "Save" : "Create project"} icon={editing ? "check" : "plus"} />}
+        footer={
+          editing ? (
+            <>
+              <Button variant="ghost" size="sm" icon="trash-2" style={{ color: "var(--color-error)" }} onClick={() => onDeleteProject(dialog.projectId)}>
+                Delete project
+              </Button>
+              <span style={{ flex: 1 }} />
+              <Button variant="ghost" size="sm" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" icon="check" disabled={!name.trim()} onClick={submit}>
+                Save
+              </Button>
+            </>
+          ) : (
+            <DialogFooter onClose={onClose} onSubmit={submit} disabled={!name.trim()} label="Create project" icon="plus" />
+          )
+        }
       >
-        <TextField
-          id="dh-p-name"
-          label="Name"
-          value={name}
-          onChange={setName}
-          placeholder="Storefront"
-          autoFocus
-          hint={
-            <span style={{ font: "400 11px/16px var(--font-mono)", color: "var(--color-outline)" }}>
-              Just a label — servers you add to it can live anywhere
-            </span>
-          }
-        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <TextField
+            id="dh-p-name"
+            label="Name"
+            value={name}
+            onChange={setName}
+            placeholder="Storefront"
+            autoFocus
+            hint={
+              <span style={{ font: "400 11px/16px var(--font-mono)", color: "var(--color-outline)" }}>
+                Just a label — servers you add to it can live anywhere
+              </span>
+            }
+          />
+
+          {editing && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span
+                style={{
+                  font: "500 11px/1 var(--font-ui)",
+                  letterSpacing: "0.55px",
+                  textTransform: "uppercase",
+                  color: "var(--color-on-surface-variant)",
+                }}
+              >
+                Roots
+              </span>
+              {roots.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {roots.map((r) => (
+                    <div
+                      key={r.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        height: 34,
+                        padding: "0 6px 0 11px",
+                        borderRadius: "var(--radius-md)",
+                        background: "var(--color-surface-container-lowest)",
+                        boxShadow: "var(--inset-hairline)",
+                      }}
+                    >
+                      <span
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          font: "400 11.5px/16px var(--font-mono)",
+                          color: "var(--color-on-surface)",
+                        }}
+                      >
+                        {r.path}
+                      </span>
+                      <IconButton icon="x" label="Remove root" size="sm" onClick={() => setRoots((rs) => rs.filter((x) => x.id !== r.id))} />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setBrowsingTarget("root")}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  height: 30,
+                  borderRadius: "var(--radius-md)",
+                  border: "1px dashed var(--color-outline-variant)",
+                  color: "var(--color-on-surface-variant)",
+                  cursor: "default",
+                  font: "400 11.5px/1 var(--font-mono)",
+                }}
+              >
+                <Icon name="plus" size={12} />
+                add root path
+              </div>
+            </div>
+          )}
+        </div>
       </Dialog>
+      {browsingTarget === "root" && (
+        <FolderBrowser
+          listing={directoryListing}
+          onNavigate={listDirectory}
+          onSelect={(path) => {
+            setRoots((rs) => [...rs, { id: crypto.randomUUID(), path: tildify(path) }]);
+            setBrowsingTarget(null);
+          }}
+          onClose={() => setBrowsingTarget(null)}
+        />
+      )}
+      </>
     );
   }
 
@@ -295,7 +405,7 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <TextField id="dh-s-cwd" label="Working directory" value={cwd} onChange={setCwd} placeholder="~/code/storefront/apps/web" mono />
                 </div>
-                <IconButton icon="folder-open" label="Browse for folder" onClick={() => setBrowsing(true)} />
+                <IconButton icon="folder-open" label="Browse for folder" onClick={() => setBrowsingTarget("cwd")} />
               </div>
               <TextField id="dh-s-cmd" label="Command" value={command} onChange={setCommand} placeholder="npm run dev" mono />
 
@@ -353,16 +463,16 @@ export function Dialogs({ dialog, onClose, devhub, onChainToAddServer, onDeleted
           )}
         </div>
       </Dialog>
-      {browsing && (
+      {browsingTarget === "cwd" && (
         <FolderBrowser
           initialPath={cwd.trim() || undefined}
           listing={directoryListing}
           onNavigate={listDirectory}
           onSelect={(path) => {
             setCwd(tildify(path));
-            setBrowsing(false);
+            setBrowsingTarget(null);
           }}
-          onClose={() => setBrowsing(false)}
+          onClose={() => setBrowsingTarget(null)}
         />
       )}
       </>

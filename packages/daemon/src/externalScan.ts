@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import type { DiscoveredDocker, DiscoveredProcess } from "@devhub/shared";
+import type { ChildProcess, DiscoveredDocker, DiscoveredProcess } from "@devhub/shared";
 
 const execFileAsync = promisify(execFile);
 const EXEC_OPTS = { timeout: 3000 };
@@ -83,16 +83,18 @@ export interface ScanResult {
   discovered: DiscoveredProcess[];
 }
 
-/** One combined lsof pass: matches already-listening processes against stopped
- *  configured servers (by cwd) and, separately, surfaces listeners that don't
- *  belong to any configured server as candidates for a brand-new project. */
+/** Matches already-listening processes (from a caller-supplied socket scan —
+ *  shared with findChildServers so a tick only pays for one lsof pass)
+ *  against stopped configured servers (by cwd) and, separately, surfaces
+ *  listeners that don't belong to any configured server as candidates for a
+ *  brand-new project. */
 export async function scanExternalProcesses(
+  sockets: ListeningSocket[],
   candidates: { id: string; cwd: string }[],
   configuredCwds: Set<string>,
   excludeRoot: string,
 ): Promise<ScanResult> {
   const empty: ScanResult = { matches: new Map(), discovered: [] };
-  const sockets = await scanListeningSockets();
   if (sockets.length === 0) return empty;
 
   const cwds = await cwdsForPids([...new Set(sockets.map((s) => s.pid))]);
@@ -120,6 +122,81 @@ export async function scanExternalProcesses(
   }
 
   return { matches, discovered };
+}
+
+/** pid -> ppid for every process on the system, via a single `ps` call. */
+async function processTree(): Promise<Map<number, number>> {
+  const ppidOf = new Map<number, number>();
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid="], EXEC_OPTS));
+  } catch {
+    return ppidOf;
+  }
+  for (const line of stdout.split("\n")) {
+    const [pidStr, ppidStr] = line.trim().split(/\s+/);
+    const pid = Number(pidStr);
+    const ppid = Number(ppidStr);
+    if (Number.isFinite(pid) && Number.isFinite(ppid)) ppidOf.set(pid, ppid);
+  }
+  return ppidOf;
+}
+
+/** Finds, for each running devhub-controlled server, any descendant process
+ *  (by actual pid ancestry, not cwd — a fanned-out child can share the
+ *  parent's cwd or have its own entirely) that's opened its own listening
+ *  socket. This is what lets a single `pnpm dev` that spawns several
+ *  per-workspace dev servers fold them all under the one server row that
+ *  launched them, instead of needing a separate configured server per port. */
+export async function findChildServers(
+  sockets: ListeningSocket[],
+  servers: { id: string; pid: number }[],
+): Promise<Map<string, ChildProcess[]>> {
+  const result = new Map<string, ChildProcess[]>();
+  if (servers.length === 0 || sockets.length === 0) return result;
+
+  const ppidOf = await processTree();
+  const childrenOf = new Map<number, number[]>();
+  for (const [pid, ppid] of ppidOf) {
+    const list = childrenOf.get(ppid);
+    if (list) list.push(pid);
+    else childrenOf.set(ppid, [pid]);
+  }
+
+  const socketsByPid = new Map<number, ListeningSocket[]>();
+  for (const s of sockets) {
+    const list = socketsByPid.get(s.pid);
+    if (list) list.push(s);
+    else socketsByPid.set(s.pid, [s]);
+  }
+
+  const descendantsByServer = new Map<string, number[]>();
+  const relevantPids = new Set<number>();
+  for (const server of servers) {
+    const descendants: number[] = [];
+    const queue = [...(childrenOf.get(server.pid) ?? [])];
+    while (queue.length) {
+      const pid = queue.shift()!;
+      descendants.push(pid);
+      for (const child of childrenOf.get(pid) ?? []) queue.push(child);
+    }
+    descendantsByServer.set(server.id, descendants);
+    for (const pid of descendants) if (socketsByPid.has(pid)) relevantPids.add(pid);
+  }
+  if (relevantPids.size === 0) return result;
+
+  const cwds = await cwdsForPids([...relevantPids]);
+  for (const server of servers) {
+    const infos: ChildProcess[] = [];
+    for (const pid of descendantsByServer.get(server.id) ?? []) {
+      const pidSockets = socketsByPid.get(pid);
+      const cwd = pidSockets && cwds.get(pid);
+      if (!pidSockets || !cwd) continue;
+      for (const s of pidSockets) infos.push({ pid, port: s.port, cwd, name: basename(cwd) });
+    }
+    if (infos.length) result.set(server.id, infos);
+  }
+  return result;
 }
 
 function parseEtimeMs(etime: string): number | null {

@@ -47,12 +47,15 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const wrapRef = useRef(false);
+  const wrapRef = useRef(true);
   const timestampsRef = useRef(true);
   const perServerRef = useRef<Map<string, ServerLogState>>(new Map());
 
   const [timestamps, setTimestamps] = useState(true);
-  const [wrap, setWrap] = useState(false);
+  // Wrapping to the drawer's actual width is the default — the fixed-cols
+  // unwrapped mode below reads as "clipped" at that width, since most lines
+  // never reach the edge that would justify a scrollbar.
+  const [wrap, setWrap] = useState(true);
   const [paused, setPaused] = useState(false);
   const [lineCount, setLineCount] = useState(0);
 
@@ -82,9 +85,20 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
   function applyWrapMode() {
     const term = termRef.current;
     const fit = fitRef.current;
-    if (!term || !fit) return;
-    if (wrapRef.current) fit.fit();
-    else term.resize(NO_WRAP_COLS, term.rows);
+    const el = containerRef.current;
+    if (!term || !fit || !el) return;
+    // The container can transiently report zero size mid-transition (the
+    // drawer's own open/close slide animation) — fitting against that sends
+    // xterm's renderer into a state where its next scroll sync throws. Skip
+    // until real dimensions land, and don't let a stray resize (e.g. racing
+    // a disposed terminal) throw past this component either way.
+    if (el.clientWidth === 0 || el.clientHeight === 0) return;
+    try {
+      if (wrapRef.current) fit.fit();
+      else term.resize(NO_WRAP_COLS, term.rows);
+    } catch (err) {
+      console.warn("[devhub] terminal resize skipped:", err);
+    }
   }
 
   // Terminal instance lives for the component's lifetime; content is swapped
@@ -95,7 +109,7 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
       fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
       fontSize: 12,
       lineHeight: 1.5,
-      theme: { background: "#0a0c0e" },
+      theme: { background: "#131416" },
       disableStdin: true,
       scrollback: MAX_BUFFERED_LINES,
     });
@@ -110,7 +124,12 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
     window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("resize", onResize);
-      term.dispose();
+      // xterm sets up its own internal ResizeObserver on the container;
+      // disconnecting it (inside dispose) doesn't cancel a callback that's
+      // already queued for this frame, so disposing synchronously here can
+      // have it fire against a half-torn-down terminal right after. Give
+      // that one frame to run first, against a still-live terminal.
+      requestAnimationFrame(() => term.dispose());
     };
   }, []);
 
@@ -173,20 +192,38 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
   const stopDisabled = state.status === "stopped";
 
   return (
-    <div
-      data-dh-drawer="1"
-      role="complementary"
-      style={{
-        flex: "0 0 480px",
-        width: 480,
-        minHeight: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--color-surface-container-low)",
-        boxShadow: "inset 1px 0 0 var(--material-hairline), var(--elevation-3)",
-        animation: "dh-drawer-in var(--duration-normal) var(--ease-out)",
-      }}
-    >
+    <>
+      <div
+        data-dh-scrim="1"
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "var(--color-scrim)",
+          opacity: "var(--scrim-alpha)",
+          zIndex: 40,
+          animation: "dh-scrim-in var(--duration-normal) var(--ease-out)",
+        }}
+      />
+      <div
+        data-dh-drawer="1"
+        role="complementary"
+        style={{
+          position: "fixed",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 520,
+          minWidth: 360,
+          minHeight: 0,
+          zIndex: 41,
+          display: "flex",
+          flexDirection: "column",
+          background: "var(--color-surface-container-low)",
+          boxShadow: "inset 1px 0 0 var(--material-hairline), var(--elevation-4)",
+          animation: "dh-drawer-in var(--duration-normal) var(--ease-out)",
+        }}
+      >
       <div
         style={{
           flex: "0 0 auto",
@@ -319,7 +356,8 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
