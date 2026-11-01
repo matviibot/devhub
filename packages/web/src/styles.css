@@ -1298,7 +1298,7 @@ a:hover {
   border-left: 1px solid var(--launch-line);
 }
 
-.project-focus-identity > span {
+.project-focus-identity > span:not(.project-mark) {
   min-width: 0;
   display: flex;
   flex-direction: column;

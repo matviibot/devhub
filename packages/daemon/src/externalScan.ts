@@ -235,7 +235,8 @@ export async function scanDockerContainers(): Promise<ObservedContainer[]> {
       "{{.Names}}",
       "{{.Image}}",
       "{{.State}}",
-      '{{.Label "com.docker.compose.project.working_dir"}}',
+      // Supabase CLI containers carry no compose working_dir, only their own workdir label.
+      '{{or (.Label "com.docker.compose.project.working_dir") (.Label "com.supabase.cli.workdir")}}',
       '{{.Label "com.docker.compose.project"}}',
       '{{.Label "com.docker.compose.service"}}',
       "{{.Ports}}",
