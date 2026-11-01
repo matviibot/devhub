@@ -87,8 +87,7 @@ export function FolderBrowser({ initialPath, listing, onNavigate, onSelect, onCl
               borderRadius: 8,
               padding: "9px 11px",
               color: "var(--dh-text-log-msg)",
-              font: "400 12px/1 var(--font-mono)",
-              outline: "none",
+              font: "400 var(--type-body)/1 var(--font-mono)",
             }}
           />
           <button
@@ -96,7 +95,7 @@ export function FolderBrowser({ initialPath, listing, onNavigate, onSelect, onCl
             disabled={!current}
             onClick={() => current && onSelect(current)}
             style={{
-              font: "500 11.5px/1 var(--font-mono)",
+              font: "var(--type-control)",
               color: "var(--dh-on-accent)",
               background: "var(--dh-accent)",
               border: "none",
@@ -109,17 +108,17 @@ export function FolderBrowser({ initialPath, listing, onNavigate, onSelect, onCl
             onMouseEnter={(e) => current && (e.currentTarget.style.background = "var(--dh-accent-hover)")}
             onMouseLeave={(e) => (e.currentTarget.style.background = "var(--dh-accent)")}
           >
-            select this folder
+            Select this folder
           </button>
         </>
       }
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <ChromeButton label="↑ up" onClick={() => listing?.parent != null && go(listing.parent)} disabled={listing?.parent == null} />
+        <ChromeButton label="↑ Up" onClick={() => listing?.parent != null && go(listing.parent)} disabled={listing?.parent == null} />
         <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, background: "var(--dh-bg-input)", border: "1px solid var(--dh-border-control)", borderRadius: 8, padding: "8px 11px", overflowX: "auto" }}>
           {crumbs.map((c, i) => (
             <span key={c.path} style={{ display: "flex", alignItems: "center", gap: 6, flex: "0 0 auto" }}>
-              {i > 0 && <span style={{ color: "var(--dh-text-dot)", font: "400 12px/1 var(--font-mono)" }}>/</span>}
+              {i > 0 && <span style={{ color: "var(--dh-text-dot)", font: "400 var(--type-body)/1 var(--font-mono)" }}>/</span>}
               <Crumb crumb={c} onGo={() => go(c.path)} />
             </span>
           ))}
@@ -127,14 +126,14 @@ export function FolderBrowser({ initialPath, listing, onNavigate, onSelect, onCl
       </div>
 
       <div style={{ height: 240, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2, marginTop: -6 }}>
-        {loading && <span style={{ padding: "10px 11px", font: "400 12px/1 var(--font-mono)", color: "var(--dh-text-muted)" }}>loading…</span>}
+        {loading && <span style={{ padding: "10px 11px", font: "var(--type-body-text)", color: "var(--dh-text-muted)" }}>Loading…</span>}
         {!loading && listing?.error && (
-          <span style={{ padding: "10px 11px", font: "400 12px/1.5 var(--font-mono)", color: "var(--dh-alert-text)" }}>can't read this folder: {listing.error}</span>
+          <span style={{ padding: "10px 11px", font: "var(--type-body-text)", color: "var(--dh-alert-text)" }}>Can’t read this folder: {listing.error}</span>
         )}
         {!loading && listing && !listing.error && listing.entries.length === 0 && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 30 }}>
             <span style={{ width: 26, height: 26, border: "1px solid var(--dh-border-button)", borderRadius: 7 }} />
-            <span style={{ font: "400 11.5px/1 var(--font-mono)", color: "var(--dh-text-host)" }}>no subfolders here</span>
+            <span style={{ font: "var(--type-meta-text)", color: "var(--dh-text-host)" }}>No subfolders here</span>
           </div>
         )}
         {!loading &&
@@ -149,32 +148,56 @@ export function FolderBrowser({ initialPath, listing, onNavigate, onSelect, onCl
 function Crumb({ crumb, onGo }: { crumb: Crumb; onGo: () => void }) {
   const [hover, setHover] = useState(false);
   return (
-    <span
+    // A real button: as a bare <span onClick> this was invisible to the
+    // keyboard entirely, so the whole breadcrumb trail was mouse-only on the
+    // one dialog you must use to add your first repo.
+    <button
+      type="button"
       onClick={onGo}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{ font: "400 12px/1 var(--font-mono)", color: hover ? "var(--dh-text-bright)" : "var(--dh-text-action)", cursor: "pointer", whiteSpace: "nowrap" }}
+      style={{
+        font: "400 var(--type-body)/1 var(--font-mono)",
+        color: hover ? "var(--dh-text-bright)" : "var(--dh-text-action)",
+        background: "transparent",
+        border: "none",
+        padding: 0,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      }}
     >
       {crumb.label}
-    </span>
+    </button>
   );
 }
 
 function DirRow({ name, hasPackageJson, onClick }: { name: string; hasPackageJson: boolean; onClick: () => void }) {
   const [hover, setHover] = useState(false);
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    // Was a role="button" div with no onKeyDown: tabbable, and inert on Enter
+    // and Space.
+    <button
+      type="button"
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 11px", borderRadius: 9, cursor: "pointer", background: hover ? "var(--dh-bg-row-hover)" : "transparent" }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 11,
+        width: "100%",
+        textAlign: "left",
+        padding: "10px 11px",
+        border: "none",
+        borderRadius: 9,
+        cursor: "pointer",
+        background: hover ? "var(--dh-bg-row-hover)" : "transparent",
+      }}
     >
-      <span style={{ font: "400 12px/1 var(--font-mono)", color: "var(--dh-text-tertiary)", flex: "0 0 auto" }}>▸</span>
-      <span style={{ font: "400 12.5px/1 var(--font-mono)", color: "var(--dh-text)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-      {hasPackageJson && <span style={{ font: "400 10.5px/1 var(--font-mono)", color: "var(--dh-text-faint)", flex: "0 0 auto" }}>pkg</span>}
-    </div>
+      <span style={{ font: "400 var(--type-body)/1 var(--font-mono)", color: "var(--dh-text-tertiary)", flex: "0 0 auto" }}>▸</span>
+      <span style={{ font: "400 var(--type-body)/1 var(--font-mono)", color: "var(--dh-text)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+      {hasPackageJson && <span style={{ font: "400 var(--type-micro)/1 var(--font-mono)", color: "var(--dh-text-secondary)", flex: "0 0 auto" }}>pkg</span>}
+    </button>
   );
 }
 
@@ -188,7 +211,7 @@ function ChromeButton({ label, onClick, disabled }: { label: string; onClick: ()
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        font: "400 11px/1 var(--font-mono)",
+        font: "var(--type-control)",
         color: hover && !disabled ? "var(--dh-text-bright)" : "var(--dh-text-action)",
         background: hover && !disabled ? "var(--dh-bg-hover)" : "transparent",
         border: "1px solid var(--dh-border-button)",

@@ -3,5 +3,7 @@ dist/
 *.log
 .DS_Store
 devhub.config.json
+devhub.config.pre-rewrite.json
 devhub.state.json
 *.tsbuildinfo
+devhub.activity.json

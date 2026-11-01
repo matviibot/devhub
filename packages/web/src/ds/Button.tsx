@@ -55,16 +55,19 @@ export function Button({
   const off = disabled || loading;
   return (
     <button
+      data-ds-button="1"
       type={type}
       disabled={off}
+      aria-busy={loading || undefined}
       onClick={off ? undefined : onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => {
         setHover(false);
         setPress(false);
       }}
-      onMouseDown={() => setPress(true)}
-      onMouseUp={() => setPress(false)}
+      onPointerDown={() => setPress(true)}
+      onPointerUp={() => setPress(false)}
+      onPointerCancel={() => setPress(false)}
       onFocus={(e) => setFocus(e.target.matches(":focus-visible"))}
       onBlur={() => setFocus(false)}
       style={{
@@ -78,7 +81,7 @@ export function Button({
         borderRadius: s.r,
         border: "none",
         fontFamily: "var(--font-ui)",
-        fontWeight: 600,
+        fontWeight: 500,
         fontSize: s.fs,
         lineHeight: s.lh,
         letterSpacing: s.tr,
@@ -88,6 +91,8 @@ export function Button({
         color: v.fg,
         cursor: off ? "default" : "pointer",
         opacity: off ? 0.38 : 1,
+        transform: press && !off ? "translateY(1px)" : "none",
+        touchAction: "manipulation",
         whiteSpace: "nowrap",
         boxShadow: focus ? `${v.ring === "none" ? "" : v.ring + ","} var(--focus-ring)` : v.ring,
         transition: "var(--transition-state)",

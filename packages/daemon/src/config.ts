@@ -1,48 +1,14 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import chokidar from "chokidar";
-import type { DetectedScript, DirectoryEntry, ProjectConfig, ProjectRoot, ServerConfig } from "@devhub/shared";
+import type { DetectedScript, DirectoryEntry, Launcher, MigrationCandidate, PortPolicy, Project, Repo } from "@devhub/shared";
+import { deriveRole } from "./roles.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const CONFIG_PATH =
-  process.env.DEVHUB_CONFIG ?? resolve(here, "../../../devhub.config.json");
-
-interface RawServer {
-  id?: string;
-  name: string;
-  kind?: "process" | "docker";
-  command?: string;
-  cwd?: string;
-  container?: string;
-  /** @deprecated legacy field, relative to the owning project's `root` */
-  dir?: string;
-  port?: number;
-}
-interface RawRoot {
-  id?: string;
-  path: string;
-  label?: string;
-}
-interface RawProject {
-  id?: string;
-  name: string;
-  /** @deprecated legacy field — projects no longer have a single shared root */
-  root?: string;
-  roots?: RawRoot[];
-  servers?: RawServer[];
-}
-interface RawConfigFile {
-  projects: RawProject[];
-}
-
-/** Joins a legacy project `root` with a server's legacy relative `dir`. */
-function legacyJoin(root: string, dir: string): string {
-  if (!dir || dir === ".") return root;
-  return `${root.replace(/\/$/, "")}/${dir.replace(/^\.?\//, "")}`;
-}
+export const CONFIG_PATH = process.env.DEVHUB_CONFIG ?? resolve(here, "../../../devhub.config.json");
 
 export function slugify(name: string): string {
   return name
@@ -59,129 +25,260 @@ export function expandHome(path: string): string {
   return path;
 }
 
-/** Resolves a server's stored working directory to an absolute path. */
-export function resolveCwd(cwd: string): string {
-  return expandHome(cwd);
+/** Inverse of expandHome — config stores tilde form so the file stays
+ *  readable and portable between machines. */
+export function tildify(path: string): string {
+  const home = homedir();
+  if (path === home) return "~";
+  if (path.startsWith(`${home}/`)) return `~${path.slice(home.length)}`;
+  return path;
 }
 
-export function parseConfig(raw: string): ProjectConfig[] {
-  const data = JSON.parse(raw) as RawConfigFile;
-  if (!Array.isArray(data.projects)) {
-    throw new Error('Config must have a top-level "projects" array');
-  }
+export const resolveCwd = expandHome;
 
-  const seenProjectIds = new Set<string>();
-  const seenServerIds = new Set<string>();
-  let migrated = false;
+// --------------------------------------------------------------- parsing
+
+interface RawPolicy {
+  ports?: string;
+  range?: [number, number];
+  env?: string;
+}
+interface RawLauncher {
+  role?: string;
+  name?: string;
+  cmd?: string;
+  command?: string;
+  dir?: string;
+  policy?: RawPolicy;
+  killPatterns?: string[];
+}
+interface RawRepo {
+  path?: string;
+  label?: string;
+  launchers?: RawLauncher[];
+  compose?: RawPolicy;
+}
+/** The pre-rewrite shape, read once so commands the user typed aren't lost.
+ *  Nothing else from it is kept — see docs/design-observation-first.md
+ *  decision 3. */
+interface LegacyServer {
+  name?: string;
+  kind?: string;
+  command?: string;
+  cwd?: string;
+}
+interface LegacyRoot {
+  path?: string;
+}
+interface RawProject {
+  id?: string;
+  name?: string;
+  icon?: string;
+  repos?: RawRepo[];
+  looseLaunchers?: RawLauncher[];
+  /** @deprecated pre-rewrite */
+  roots?: LegacyRoot[];
+  /** @deprecated pre-rewrite */
+  servers?: LegacyServer[];
+}
+
+function parsePolicy(raw: RawPolicy | undefined, what: string): PortPolicy {
+  if (!raw || raw.ports === "fixed" || raw.ports === undefined) return { ports: "fixed" };
+  if (raw.ports !== "alloc") throw new Error(`${what}: unknown port policy "${raw.ports}" (expected "fixed" or "alloc")`);
+  const range = raw.range;
+  if (!Array.isArray(range) || range.length !== 2 || !range.every((n) => Number.isInteger(n))) {
+    throw new Error(`${what}: an "alloc" policy needs a "range": [from, to] of two integers`);
+  }
+  if (range[1] < range[0]) throw new Error(`${what}: port range [${range[0]}, ${range[1]}] is inverted`);
+  return { ports: "alloc", range: [range[0], range[1]], ...(raw.env ? { env: raw.env } : {}) };
+}
+
+function parseLauncher(raw: RawLauncher, what: string): Launcher {
+  const role = (raw.role ?? raw.name ?? "").trim();
+  if (!role) throw new Error(`${what}: launcher missing "role"`);
+  const cmd = (raw.cmd ?? raw.command ?? "").trim();
+  if (!cmd) throw new Error(`${what}: launcher "${role}" missing "cmd"`);
+  const dir = raw.dir?.trim().replace(/^\.?\/*/, "").replace(/\/+$/, "");
+  return {
+    role,
+    cmd,
+    ...(dir ? { dir } : {}),
+    policy: parsePolicy(raw.policy, `${what} launcher "${role}"`),
+    ...(raw.killPatterns?.length ? { killPatterns: raw.killPatterns } : {}),
+  };
+}
+
+export interface ParsedConfig {
+  projects: Project[];
+  /** Commands recovered from a pre-rewrite config, offered once in the UI. */
+  migration: MigrationCandidate[];
+  /** True when this file was still in the pre-rewrite shape. */
+  legacy: boolean;
+}
+
+/** Turns a pre-rewrite project (roots[] + servers[]) into the new shape:
+ *  its roots become repos with no launchers, and each process server's
+ *  command becomes a migration candidate keyed by the role its cwd derives
+ *  to. Nothing is silently promoted — the candidates only surface as an
+ *  offer in the UI. */
+function migrateLegacy(p: RawProject, projectId: string): { repos: Repo[]; candidates: MigrationCandidate[] } {
+  const repos: Repo[] = (p.roots ?? [])
+    .map((r) => (r.path ?? "").trim())
+    .filter(Boolean)
+    .map((path) => ({ path, launchers: [] }));
+
+  const candidates: MigrationCandidate[] = [];
+  const seen = new Set<string>();
+  for (const s of p.servers ?? []) {
+    if (s.kind === "docker" || !s.command?.trim() || !s.cwd?.trim()) continue;
+    const abs = expandHome(s.cwd.trim());
+    // Attribute to the repo whose expanded path is the longest prefix of
+    // this cwd. A server under a since-deleted sibling worktree matches
+    // nothing and is dropped, which is the intent.
+    let best: Repo | null = null;
+    for (const repo of repos) {
+      const repoAbs = expandHome(repo.path).replace(/\/$/, "");
+      const parent = dirname(repoAbs);
+      const sibling = `${parent}/${basename(repoAbs)}--`;
+      const underRepo = abs === repoAbs || abs.startsWith(`${repoAbs}/`);
+      const underSibling = abs.startsWith(sibling);
+      if (!underRepo && !underSibling) continue;
+      if (!best || expandHome(repo.path).length > expandHome(best.path).length) best = repo;
+    }
+    if (!best) continue;
+    const repoAbs = expandHome(best.path).replace(/\/$/, "");
+    const owner = underWorktreeBase(abs, repoAbs);
+    const { role, dir } = deriveRole(abs, owner, repoAbs);
+    const key = `${best.path}\0${role}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push({ projectId, repoPath: best.path, role, command: s.command.trim(), dir });
+  }
+  return { repos, candidates };
+}
+
+/** The worktree-ish base a legacy cwd sits under: either the repo itself or
+ *  a `<repo>--<slug>` sibling. Used only to make role derivation relative to
+ *  the right checkout during migration. */
+function underWorktreeBase(abs: string, repoAbs: string): string {
+  const parent = dirname(repoAbs);
+  const prefix = `${parent}/${basename(repoAbs)}--`;
+  if (abs.startsWith(prefix)) {
+    const rest = abs.slice(parent.length + 1);
+    return `${parent}/${rest.split("/")[0]}`;
+  }
+  return repoAbs;
+}
+
+export function parseConfig(raw: string): ParsedConfig {
+  const data = JSON.parse(raw) as { projects?: RawProject[] };
+  if (!Array.isArray(data.projects)) throw new Error('Config must have a top-level "projects" array');
+
+  const seenIds = new Set<string>();
+  const migration: MigrationCandidate[] = [];
+  let legacy = false;
 
   const projects = data.projects.map((p) => {
-    if (!p.name) {
-      throw new Error(`Project entry missing required field "name": ${JSON.stringify(p)}`);
+    const name = (p.name ?? "").trim();
+    if (!name) throw new Error(`Project entry missing required field "name": ${JSON.stringify(p)}`);
+    const id = p.id ?? slugify(name);
+    if (seenIds.has(id)) throw new Error(`Duplicate project id "${id}" — give it an explicit unique "id"`);
+    seenIds.add(id);
+
+    let repos: Repo[];
+    if (p.repos) {
+      repos = p.repos
+        .map((r) => (r.path ?? "").trim())
+        .filter(Boolean)
+        .map((path, i) => {
+          const r = p.repos![i];
+          return {
+            path,
+            ...(r.label?.trim() ? { label: r.label.trim() } : {}),
+            launchers: (r.launchers ?? []).map((l) => parseLauncher(l, `project "${name}" repo "${path}"`)),
+            ...(r.compose ? { compose: parsePolicy(r.compose, `project "${name}" repo "${path}" compose`) } : {}),
+          };
+        });
+    } else {
+      legacy = true;
+      const migrated = migrateLegacy(p, id);
+      repos = migrated.repos;
+      migration.push(...migrated.candidates);
     }
-    const projectId = p.id ?? slugify(p.name);
-    if (seenProjectIds.has(projectId)) {
-      throw new Error(`Duplicate project id "${projectId}" — give it an explicit unique "id" field`);
-    }
-    seenProjectIds.add(projectId);
 
-    const roots: ProjectRoot[] = (p.roots ?? [])
-      .map((r) => ({ id: r.id ?? crypto.randomUUID(), path: r.path, ...(r.label ? { label: r.label } : {}) }))
-      .filter((r) => r.path.trim());
-
-    const servers: ServerConfig[] = (p.servers ?? []).map((s) => {
-      if (!s.name) {
-        throw new Error(`Server entry missing required field "name" in project "${p.name}": ${JSON.stringify(s)}`);
-      }
-      const serverId = s.id ?? slugify(`${p.name}-${s.name}`);
-      if (seenServerIds.has(serverId)) {
-        throw new Error(`Duplicate server id "${serverId}" — give it an explicit unique "id" field`);
-      }
-      seenServerIds.add(serverId);
-
-      let kind = s.kind;
-      if (!kind) {
-        kind = "process";
-        migrated = true;
-      }
-
-      if (kind === "docker") {
-        if (!s.container) {
-          throw new Error(`Docker server entry missing required field "container" in project "${p.name}": ${JSON.stringify(s)}`);
-        }
-        return { id: serverId, name: s.name, kind: "docker" as const, container: s.container, port: s.port };
-      }
-
-      if (!s.command) {
-        throw new Error(`Server entry missing required field "command" in project "${p.name}": ${JSON.stringify(s)}`);
-      }
-      let cwd = s.cwd;
-      if (!cwd && p.root) {
-        cwd = legacyJoin(p.root, s.dir ?? ".");
-        migrated = true;
-      }
-      if (!cwd) {
-        throw new Error(`Server entry missing required field "cwd" in project "${p.name}": ${JSON.stringify(s)}`);
-      }
-      return { id: serverId, name: s.name, kind: "process" as const, command: s.command, cwd, port: s.port };
-    });
-
-    return { id: projectId, name: p.name, roots, servers };
+    const looseLaunchers = (p.looseLaunchers ?? []).map((l) => parseLauncher(l, `project "${name}" loose`));
+    const icon = p.icon?.trim();
+    return { id, name, ...(icon ? { icon } : {}), repos, ...(looseLaunchers.length ? { looseLaunchers } : {}) };
   });
 
-  if (migrated) console.log("[devhub] migrated legacy config shape (root/dir fields, kind-less servers) — will be rewritten on next save");
-  return projects;
+  if (legacy) {
+    console.log(
+      `[devhub] read a pre-rewrite config: kept ${projects.reduce((n, p) => n + p.repos.length, 0)} repo path(s), ` +
+        `recovered ${migration.length} command(s) as launcher suggestions, discarded every stored server row. ` +
+        `Nothing is written back until you save a launcher.`,
+    );
+  }
+  return { projects, migration, legacy };
 }
 
-export function loadConfig(path: string = CONFIG_PATH): ProjectConfig[] {
+/** Reads the config, and — the first time it finds a pre-rewrite file —
+ *  snapshots it next to itself before anything can overwrite it.
+ *
+ *  The new shape cannot represent the old rows, so the first `saveLauncher`
+ *  rewrites the file and the remaining recovered commands are gone for good.
+ *  Keeping a copy means a half-finished review is recoverable instead of
+ *  being a one-way door the user walked through without being told. */
+export function loadConfig(path: string = CONFIG_PATH): ParsedConfig {
   const raw = readFileSync(path, "utf-8");
-  return parseConfig(raw);
+  const parsed = parseConfig(raw);
+  if (parsed.legacy) {
+    const backup = path.replace(/\.json$/, "") + ".pre-rewrite.json";
+    if (!existsSync(backup)) {
+      writeFileSync(backup, raw, "utf-8");
+      console.log(`[devhub] kept a copy of your pre-rewrite config at ${backup}`);
+    }
+  }
+  return parsed;
 }
 
-/** Pretty-serializes and writes the config back to disk (used by CRUD ops). */
-export function writeConfig(projects: ProjectConfig[], path: string = CONFIG_PATH): void {
+function policyOut(p: PortPolicy) {
+  return p.ports === "alloc" ? { ports: "alloc", range: p.range, ...(p.env ? { env: p.env } : {}) } : { ports: "fixed" };
+}
+
+export function writeConfig(projects: Project[], path: string = CONFIG_PATH): void {
   const data = {
     projects: projects.map((p) => ({
       id: p.id,
       name: p.name,
-      ...(p.roots.length ? { roots: p.roots } : {}),
-      servers: p.servers.map((s) => {
-        const port = s.port ? { port: s.port } : {};
-        return s.kind === "docker"
-          ? { id: s.id, name: s.name, kind: s.kind, container: s.container, ...port }
-          : { id: s.id, name: s.name, kind: s.kind, command: s.command, cwd: s.cwd, ...port };
-      }),
+      ...(p.icon ? { icon: p.icon } : {}),
+      repos: p.repos.map((r) => ({
+        path: r.path,
+        ...(r.label ? { label: r.label } : {}),
+        ...(r.compose ? { compose: policyOut(r.compose) } : {}),
+        launchers: r.launchers.map((l) => ({
+          role: l.role,
+          cmd: l.cmd,
+          ...(l.dir ? { dir: l.dir } : {}),
+          policy: policyOut(l.policy),
+          ...(l.killPatterns?.length ? { killPatterns: l.killPatterns } : {}),
+        })),
+      })),
+      ...(p.looseLaunchers?.length
+        ? {
+            looseLaunchers: p.looseLaunchers.map((l) => ({
+              role: l.role,
+              cmd: l.cmd,
+              ...(l.dir ? { dir: l.dir } : {}),
+              policy: policyOut(l.policy),
+            })),
+          }
+        : {}),
     })),
   };
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
 }
 
-/** Lists the subdirectories of a resolved absolute (or ~-relative) path, for
- *  the web UI's folder-browser dialog — browsers can't expose real OS paths,
- *  but the daemon runs on the user's own machine and can just `readdir`.
- *  Defaults to $HOME when no path is given. Dotfiles are hidden to match
- *  typical OS folder pickers; files are omitted since only a directory can
- *  ever be selected as a server's cwd. */
-export function listDirectory(rawPath?: string): { path: string; parent: string | null; entries: DirectoryEntry[]; error?: string } {
-  const path = rawPath?.trim() ? resolve(expandHome(rawPath.trim())) : homedir();
-  let entries: DirectoryEntry[] = [];
-  let error: string | undefined;
-  try {
-    entries = readdirSync(path, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-      .map((e) => ({ name: e.name, hasPackageJson: existsSync(join(path, e.name, "package.json")) }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  } catch (err) {
-    error = (err as Error).message;
-  }
-  const up = dirname(path);
-  return { path, parent: up === path ? null : up, entries, error };
-}
-
-export function watchConfig(
-  path: string,
-  onChange: (projects: ProjectConfig[]) => void,
-  onError: (err: Error) => void,
-): () => void {
+export function watchConfig(path: string, onChange: (c: ParsedConfig) => void, onError: (err: Error) => void): () => void {
   const watcher = chokidar.watch(path, { ignoreInitial: true });
   watcher.on("change", () => {
     try {
@@ -193,9 +290,32 @@ export function watchConfig(
   return () => void watcher.close();
 }
 
+// ------------------------------------------------------------- filesystem
+
+/** Lists subdirectories for the web UI's folder browser. Flags git repos so
+ *  picking a repo path doesn't need a round trip per row. */
+export function listDirectory(rawPath?: string): { path: string; parent: string | null; entries: DirectoryEntry[]; error?: string } {
+  const path = rawPath?.trim() ? resolve(expandHome(rawPath.trim())) : homedir();
+  let entries: DirectoryEntry[] = [];
+  let error: string | undefined;
+  try {
+    entries = readdirSync(path, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .map((e) => ({
+        name: e.name,
+        hasPackageJson: existsSync(join(path, e.name, "package.json")),
+        isGitRepo: existsSync(join(path, e.name, ".git")),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err) {
+    error = (err as Error).message;
+  }
+  const up = dirname(path);
+  return { path, parent: up === path ? null : up, entries, error };
+}
+
 const SCRIPT_IGNORE = new Set(["pretest", "postinstall", "preinstall", "postpublish"]);
 
-/** Scans a resolved directory's package.json for scripts, prefixed by the detected package manager. */
 export function detectScripts(absoluteDir: string): { scripts: DetectedScript[]; hasPackageJson: boolean } {
   const pkgPath = join(absoluteDir, "package.json");
   if (!existsSync(pkgPath)) return { scripts: [], hasPackageJson: false };
@@ -207,25 +327,9 @@ export function detectScripts(absoluteDir: string): { scripts: DetectedScript[];
     return { scripts: [], hasPackageJson: true };
   }
 
-  const runner = existsSync(join(absoluteDir, "pnpm-lock.yaml"))
-    ? "pnpm run"
-    : existsSync(join(absoluteDir, "yarn.lock"))
-      ? "yarn"
-      : "npm run";
-
+  const runner = existsSync(join(absoluteDir, "pnpm-lock.yaml")) ? "pnpm run" : existsSync(join(absoluteDir, "yarn.lock")) ? "yarn" : "npm run";
   const scripts = Object.keys(pkg.scripts ?? {})
     .filter((name) => !SCRIPT_IGNORE.has(name))
     .map((name) => ({ name, command: `${runner} ${name}` }));
-
   return { scripts, hasPackageJson: true };
-}
-
-/** Best-effort dev command for a directory being auto-folded into a project
- *  from discovery, where the daemon only knows the cwd/port of an already-
- *  running process, not the real command line that started it — prefers a
- *  script literally named "dev", then "start", then whatever's first. */
-export function guessDevCommand(absoluteDir: string): string {
-  const { scripts } = detectScripts(absoluteDir);
-  const byName = (name: string) => scripts.find((s) => s.name === name);
-  return (byName("dev") ?? byName("start") ?? scripts[0])?.command ?? "npm start";
 }

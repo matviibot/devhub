@@ -3,11 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "devhub": "dist/cli.js"
+  },
   "scripts": {
     "postinstall": "chmod +x ../../node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true",
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "cli": "node dist/cli.js"
   },
   "dependencies": {
     "@devhub/shared": "*",

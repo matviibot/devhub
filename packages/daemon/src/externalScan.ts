@@ -1,9 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import type { ChildProcess, DiscoveredDocker, DiscoveredProcess, DockerContainerInfo } from "@devhub/shared";
 
 const execFileAsync = promisify(execFile);
 const EXEC_OPTS = { timeout: 3000 };
@@ -14,21 +10,30 @@ export interface ListeningSocket {
   command: string;
 }
 
-export interface ExternalMatch {
-  pid: number;
-  port: number;
-}
-
 let lsofWarned = false;
+
+/** Whether each observation probe last succeeded. An empty result from a probe
+ *  that couldn't run is not the same fact as an empty result from one that ran
+ *  and found nothing — rendering the first as the second is how devhub would
+ *  show a confident, wrong "everything is fine" with Docker stopped. The UI
+ *  reads this to say "hidden, not gone". */
+const probes = { lsof: true, docker: true };
+export const probeStatus = () => ({ ...probes });
 
 /** Runs lsof, tolerating its exit-code-1-means-"no matches" convention. */
 async function runLsof(args: string[]): Promise<string> {
   try {
     const { stdout } = await execFileAsync("lsof", args, EXEC_OPTS);
+    probes.lsof = true;
     return stdout;
   } catch (err) {
     const e = err as NodeJS.ErrnoException & { stdout?: string };
-    if (typeof e.stdout === "string") return e.stdout;
+    // Exit code 1 with output is lsof's "no matches" — the probe did run.
+    if (typeof e.stdout === "string") {
+      probes.lsof = true;
+      return e.stdout;
+    }
+    probes.lsof = false;
     if (!lsofWarned) {
       lsofWarned = true;
       console.warn("[devhub] external-process detection disabled (lsof unavailable):", e.message);
@@ -76,127 +81,34 @@ export async function cwdsForPids(pids: number[]): Promise<Map<number, string>> 
   return map;
 }
 
-export interface ScanResult {
-  /** Listeners whose cwd matches a stopped, already-configured server. */
-  matches: Map<string, ExternalMatch>;
-  /** Listeners under $HOME with a package.json that match no configured server at all. */
-  discovered: DiscoveredProcess[];
+/** Every listening socket, grouped by the process that owns it, with that
+ *  process's working directory resolved. This is the raw observation the
+ *  whole model is built on — nothing here is matched against config yet. */
+export interface ObservedProcess {
+  pid: number;
+  command: string;
+  cwd: string;
+  ports: number[];
 }
 
-/** Matches already-listening processes (from a caller-supplied socket scan —
- *  shared with findChildServers so a tick only pays for one lsof pass)
- *  against stopped configured servers (by cwd) and, separately, surfaces
- *  listeners that don't belong to any configured server as candidates for a
- *  brand-new project. */
-export async function scanExternalProcesses(
-  sockets: ListeningSocket[],
-  candidates: { id: string; cwd: string }[],
-  configuredCwds: Set<string>,
-  excludeRoot: string,
-): Promise<ScanResult> {
-  const empty: ScanResult = { matches: new Map(), discovered: [] };
-  if (sockets.length === 0) return empty;
+export async function observeProcesses(sockets: ListeningSocket[]): Promise<ObservedProcess[]> {
+  if (sockets.length === 0) return [];
+  const pids = [...new Set(sockets.map((s) => s.pid))];
+  const cwds = await cwdsForPids(pids);
 
-  const cwds = await cwdsForPids([...new Set(sockets.map((s) => s.pid))]);
-
-  const matches = new Map<string, ExternalMatch>();
-  for (const c of candidates) {
-    const hit = sockets.find((s) => cwds.get(s.pid) === c.cwd);
-    if (hit) matches.set(c.id, { pid: hit.pid, port: hit.port });
-  }
-
-  const home = homedir();
-  const seenCwds = new Set<string>();
-  const discovered: DiscoveredProcess[] = [];
+  const byPid = new Map<number, ObservedProcess>();
   for (const s of sockets) {
     const cwd = cwds.get(s.pid);
-    if (!cwd || seenCwds.has(cwd) || configuredCwds.has(cwd)) continue;
-    if (cwd !== home && !cwd.startsWith(`${home}/`)) continue;
-    // Never suggest devhub's own checkout as a project to manage.
-    if (cwd === excludeRoot || cwd.startsWith(`${excludeRoot}/`)) continue;
-    // MVP heuristic: only suggest directories that look like a JS/Node project.
-    // Misses Python/Go/Rust/etc. dev servers — worth widening later.
-    if (!existsSync(join(cwd, "package.json"))) continue;
-    seenCwds.add(cwd);
-    discovered.push({ kind: "process", cwd, port: s.port, pid: s.pid, suggestedName: basename(cwd) });
-  }
-
-  return { matches, discovered };
-}
-
-/** pid -> ppid for every process on the system, via a single `ps` call. */
-async function processTree(): Promise<Map<number, number>> {
-  const ppidOf = new Map<number, number>();
-  let stdout: string;
-  try {
-    ({ stdout } = await execFileAsync("ps", ["-axo", "pid=,ppid="], EXEC_OPTS));
-  } catch {
-    return ppidOf;
-  }
-  for (const line of stdout.split("\n")) {
-    const [pidStr, ppidStr] = line.trim().split(/\s+/);
-    const pid = Number(pidStr);
-    const ppid = Number(ppidStr);
-    if (Number.isFinite(pid) && Number.isFinite(ppid)) ppidOf.set(pid, ppid);
-  }
-  return ppidOf;
-}
-
-/** Finds, for each running devhub-controlled server, any descendant process
- *  (by actual pid ancestry, not cwd — a fanned-out child can share the
- *  parent's cwd or have its own entirely) that's opened its own listening
- *  socket. This is what lets a single `pnpm dev` that spawns several
- *  per-workspace dev servers fold them all under the one server row that
- *  launched them, instead of needing a separate configured server per port. */
-export async function findChildServers(
-  sockets: ListeningSocket[],
-  servers: { id: string; pid: number }[],
-): Promise<Map<string, ChildProcess[]>> {
-  const result = new Map<string, ChildProcess[]>();
-  if (servers.length === 0 || sockets.length === 0) return result;
-
-  const ppidOf = await processTree();
-  const childrenOf = new Map<number, number[]>();
-  for (const [pid, ppid] of ppidOf) {
-    const list = childrenOf.get(ppid);
-    if (list) list.push(pid);
-    else childrenOf.set(ppid, [pid]);
-  }
-
-  const socketsByPid = new Map<number, ListeningSocket[]>();
-  for (const s of sockets) {
-    const list = socketsByPid.get(s.pid);
-    if (list) list.push(s);
-    else socketsByPid.set(s.pid, [s]);
-  }
-
-  const descendantsByServer = new Map<string, number[]>();
-  const relevantPids = new Set<number>();
-  for (const server of servers) {
-    const descendants: number[] = [];
-    const queue = [...(childrenOf.get(server.pid) ?? [])];
-    while (queue.length) {
-      const pid = queue.shift()!;
-      descendants.push(pid);
-      for (const child of childrenOf.get(pid) ?? []) queue.push(child);
+    if (!cwd) continue;
+    const existing = byPid.get(s.pid);
+    if (existing) {
+      if (!existing.ports.includes(s.port)) existing.ports.push(s.port);
+    } else {
+      byPid.set(s.pid, { pid: s.pid, command: s.command, cwd, ports: [s.port] });
     }
-    descendantsByServer.set(server.id, descendants);
-    for (const pid of descendants) if (socketsByPid.has(pid)) relevantPids.add(pid);
   }
-  if (relevantPids.size === 0) return result;
-
-  const cwds = await cwdsForPids([...relevantPids]);
-  for (const server of servers) {
-    const infos: ChildProcess[] = [];
-    for (const pid of descendantsByServer.get(server.id) ?? []) {
-      const pidSockets = socketsByPid.get(pid);
-      const cwd = pidSockets && cwds.get(pid);
-      if (!pidSockets || !cwd) continue;
-      for (const s of pidSockets) infos.push({ pid, port: s.port, cwd, name: basename(cwd) });
-    }
-    if (infos.length) result.set(server.id, infos);
-  }
-  return result;
+  for (const p of byPid.values()) p.ports.sort((a, b) => a - b);
+  return [...byPid.values()];
 }
 
 function parseEtimeMs(etime: string): number | null {
@@ -248,6 +160,44 @@ export interface DockerInspectState {
   exitCode: number | null;
 }
 
+/** One container as observed on the host. The three compose labels are what
+ *  make a container attributable: `workingDir` is an exact worktree path
+ *  (compose always runs from the checkout root), `project` survives even
+ *  when that directory is gone, and `service` is the role. */
+export interface ObservedContainer {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  running: boolean;
+  exitCode: number | null;
+  composeWorkingDir: string | null;
+  composeProject: string | null;
+  composeService: string | null;
+  /** Host-side published ports, parsed from `docker ps --format {{.Ports}}`.
+   *  Without these a container's real port is observed by lsof as belonging to
+   *  `com.docker.backend` and reported as foreign — devhub calling its own
+   *  containers somebody else's. */
+  ports: number[];
+}
+
+/** Parses the host ports out of a `docker ps` port string, e.g.
+ *  `0.0.0.0:8108->8108/tcp, [::]:8108->8108/tcp, 9000/tcp` -> [8108].
+ *  Entries with no `->` are container-internal and publish nothing. */
+export function parseDockerPorts(spec: string | undefined): number[] {
+  if (!spec) return [];
+  const out = new Set<number>();
+  for (const part of spec.split(",")) {
+    const mapping = part.trim();
+    if (!mapping.includes("->")) continue;
+    const host = mapping.slice(0, mapping.indexOf("->"));
+    // host is `0.0.0.0:8108`, `[::]:8108` or bare `8108` on some daemons.
+    const port = Number(host.slice(host.lastIndexOf(":") + 1));
+    if (Number.isInteger(port) && port > 0 && port < 65536) out.add(port);
+  }
+  return [...out];
+}
+
 let dockerWarned = false;
 
 /** Runs a read-only docker CLI command, tolerating docker not being
@@ -258,9 +208,11 @@ let dockerWarned = false;
 async function runDocker(args: string[]): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("docker", args, EXEC_OPTS);
+    probes.docker = true;
     return stdout;
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
+    probes.docker = false;
     if (!dockerWarned) {
       dockerWarned = true;
       console.warn("[devhub] docker detection disabled (docker unavailable):", e.message);
@@ -269,18 +221,45 @@ async function runDocker(args: string[]): Promise<string | null> {
   }
 }
 
-/** All containers, running or not, via `docker ps -a` — stopped containers
- *  (e.g. after `docker compose down`) are still worth surfacing so the user
- *  can configure and later start them from devhub. */
-export async function scanDockerContainers(): Promise<DockerContainerInfo[]> {
-  const stdout = await runDocker(["ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.State}}"]);
+/** All containers, running or not, via `docker ps -a`. Stopped and
+ *  never-started (`Created`) containers matter as much as running ones —
+ *  eight of them on this machine are failed compose starts from deleted
+ *  worktrees, which is exactly what the failed-start alert reports. */
+export async function scanDockerContainers(): Promise<ObservedContainer[]> {
+  const stdout = await runDocker([
+    "ps",
+    "-a",
+    "--format",
+    [
+      "{{.ID}}",
+      "{{.Names}}",
+      "{{.Image}}",
+      "{{.State}}",
+      '{{.Label "com.docker.compose.project.working_dir"}}',
+      '{{.Label "com.docker.compose.project"}}',
+      '{{.Label "com.docker.compose.service"}}',
+      "{{.Ports}}",
+    ].join("\t"),
+  ]);
   if (!stdout) return [];
-  const results: DockerContainerInfo[] = [];
+  const results: ObservedContainer[] = [];
   for (const line of stdout.split("\n")) {
     if (!line.trim()) continue;
-    const [id, names, image, state] = line.split("\t");
+    const [id, names, image, state, workingDir, project, service, ports] = line.split("\t");
     if (!id) continue;
-    results.push({ id, names: names ? names.split(",") : [], image: image ?? "", running: state === "running", state: state ?? "" });
+    const trim = (v: string | undefined) => (v && v.trim() ? v.trim() : null);
+    results.push({
+      id,
+      name: (names ?? "").split(",")[0] ?? id,
+      image: image ?? "",
+      state: state ?? "",
+      running: state === "running",
+      exitCode: null,
+      composeWorkingDir: trim(workingDir),
+      composeProject: trim(project),
+      composeService: trim(service),
+      ports: parseDockerPorts(ports),
+    });
   }
   return results;
 }

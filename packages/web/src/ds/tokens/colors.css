@@ -1,62 +1,61 @@
-/* DevHub color system, following the "devhub redesign" design.
-   The app is dark-only (App.tsx always sets data-theme="dark").
-
-   The --dh-* block below is ported verbatim from the mockup's own
-   inline styles — every hex/rgba value is copied as-is, not
-   approximated. The mockup itself uses many close-but-distinct
-   one-off tones (e.g. five different near-white greys) rather than
-   a strict token scale, so these stay separate instead of being
-   collapsed into the M3 roles below. Dashboard/LogDrawer reference
-   these directly wherever they reproduce a mockup element.
-
-   The --color-* M3-style roles below are for ds/ primitives used
-   outside the mockup's own screens (dialogs, toasts, menus) — they
-   reuse --dh-* values where the mockup defines an equivalent. */
+/* DevHub's dark, neutral product palette. Every screen and primitive shares
+   these semantic roles so older monitoring surfaces cannot drift into a
+   separate colour system. */
 :root{
   color-scheme:dark;
 
-  /* ── literal mockup palette ──────────────────────────────────────── */
-  --dh-bg-page:#0a0910;
-  --dh-bg-app:#14131c;
-  --dh-bg-rail:#100f17;
-  --dh-bg-rail-footer:#0c0b12;
-  --dh-bg-card:#1c1a25;
-  --dh-bg-input:#191722;
-  --dh-bg-hover:#262234;
-  --dh-bg-row-hover:#221f2d;
-  --dh-bg-row-selected:#272338;
+  /* ── foundations ────────────────────────────────────────────────── */
+  --dh-bg-page:#0c0d10;
+  --dh-bg-app:#0f1115;
+  --dh-bg-rail:#111318;
+  --dh-bg-rail-footer:#0c0e12;
+  --dh-bg-card:#17191f;
+  --dh-bg-input:#121419;
+  --dh-bg-raised:#1c1f26;
+  --dh-bg-hover:#232730;
+  --dh-bg-row-hover:#20242b;
+  --dh-bg-row-selected:#252b37;
 
-  --dh-border-hairline:#201c2b;
-  --dh-border-control:#2b2839;
-  --dh-border-button:#302c3f;
-  --dh-border-card:#241f2f;
-  --dh-border-card-hover:#3a3550;
-  --dh-border-tag:#322e42;
-  --dh-divider-line:#221e2d;
+  --dh-border-hairline:#292e38;
+  --dh-border-control:#303641;
+  --dh-border-button:#343a46;
+  --dh-border-card:#292e38;
+  --dh-border-card-hover:#424a58;
+  --dh-border-tag:#343a46;
+  --dh-divider-line:#242932;
 
-  --dh-text:#e6e2f2;
-  --dh-text-bright:#eeebf7;
-  --dh-text-secondary:#8f89a4;
-  --dh-text-tertiary:#807a94;
-  --dh-text-host:#7b7590;
-  --dh-text-action:#a49eb9;
-  --dh-text-muted:#6b6680;
-  --dh-text-faint:#565169;
-  --dh-text-dot:#4b4760;
-  --dh-text-back:#c4bfd6;
-  --dh-text-log-msg:#b5b0c8;
+  --dh-text:#f0f1f3;
+  --dh-text-bright:#f6f7f8;
+  --dh-text-secondary:#9298a3;
+  --dh-text-tertiary:#858d99;
+  --dh-text-host:#858d99;
+  --dh-text-action:#a8aeb8;
+  --dh-text-muted:#777f8b;
+  /* 2.27:1 on a card — far below AA at the 9–11.5px it renders at. Ornament
+     only (separator dots, rules). Anything that carries a state, an
+     identifier or an instruction uses --dh-text-secondary. */
+  --dh-text-faint:#5d6570;
+  --dh-text-dot:#505762;
+  --dh-text-back:#c7cbd2;
+  --dh-text-log-msg:#b7bdc6;
 
-  --dh-accent:#a58cf5;
-  --dh-on-accent:#150f26;
-  --dh-accent-hover:#b9a4f8;
-  --dh-accent-tint-bg:rgba(165,140,245,0.12);
-  --dh-accent-tint-text:#cabdf3;
-  --dh-accent-focus:rgba(165,140,245,0.55);
+  --dh-accent:#8ea6ff;
+  --dh-on-accent:#101625;
+  --dh-accent-hover:#a7b8ff;
+  --dh-accent-tint-bg:rgba(142,166,255,0.12);
+  --dh-accent-tint-text:#c3ceff;
+  --dh-accent-focus:rgba(142,166,255,0.5);
 
   --dh-status-running:#74cf9a;
   --dh-status-starting:#dfb35c;
   --dh-status-crashed:#ee8b78;
-  --dh-status-stopped:#5c5772;
+  --dh-status-stopped:#8b929e;
+
+  --dh-warning-bg:rgba(223,179,92,0.08);
+  --dh-warning-border:rgba(223,179,92,0.22);
+  --dh-warning-border-strong:rgba(223,179,92,0.3);
+  --dh-warning-text:#e5cd9c;
+  --dh-warning-text-muted:rgba(229,205,156,0.6);
 
   --dh-alert-bg:rgba(238,139,120,0.08);
   --dh-alert-bg-hover:rgba(238,139,120,0.14);
@@ -68,12 +67,24 @@
   --dh-flag-bg:rgba(238,139,120,0.09);
   --dh-flag-border:rgba(238,139,120,0.2);
 
-  --dh-link:#b6a2f7;
-  --dh-link-hover:#d5c9fb;
-  --dh-docker-badge-border:rgba(164,158,185,0.3);
-  --dh-scrim:#0a0910;
-  --dh-scrollbar-thumb:#332f42;
-  --dh-placeholder:#6b6680;
+  --dh-link:#9ba9ee;
+  --dh-link-hover:#bcc6f8;
+  --dh-docker-badge-border:rgba(146,152,163,0.3);
+  --dh-scrim:#080a0d;
+  /* The scrim's resting appearance. Alpha lives in the colour, never in an
+     `opacity` declaration: a running CSS animation overrides inline styles,
+     so a scrim with inline `opacity:.58` plus a 0→1 opacity keyframe ramps
+     to fully opaque and then snaps back — a full-screen flash on open. */
+  --dh-scrim-veil:rgba(8,10,13,0.62);
+  --dh-scrollbar-thumb:#343a45;
+  --dh-placeholder:#69717d;
+
+  /* Stable project identities; decorative, but still centrally governed. */
+  --dh-mark-blue:#9bb5ff;--dh-mark-blue-bg:#1c315e;
+  --dh-mark-green:#72d6aa;--dh-mark-green-bg:#173d31;
+  --dh-mark-amber:#f0b96d;--dh-mark-amber-bg:#4c3418;
+  --dh-mark-cyan:#77c7d9;--dh-mark-cyan-bg:#173942;
+  --dh-mark-coral:#ff928d;--dh-mark-coral-bg:#4a2527;
 
   /* ── surfaces ─────────────────────────────────────────────────────── */
   --color-primary:var(--dh-accent);--color-on-primary:var(--dh-on-accent);
@@ -82,8 +93,8 @@
   --color-secondary-container:var(--dh-border-card);--color-on-secondary-container:var(--dh-text-bright);
 
   --color-surface:var(--dh-bg-app);--color-on-surface:var(--dh-text);--color-on-surface-variant:var(--dh-text-secondary);
-  --color-surface-dim:var(--dh-bg-rail-footer);--color-surface-bright:#34303f;
-  --color-surface-container-lowest:var(--dh-bg-rail);--color-surface-container-low:var(--dh-bg-input);--color-surface-container:var(--dh-bg-card);--color-surface-container-high:var(--dh-bg-hover);--color-surface-container-highest:#322e42;
+  --color-surface-dim:var(--dh-bg-rail-footer);--color-surface-bright:#30343d;
+  --color-surface-container-lowest:var(--dh-bg-rail);--color-surface-container-low:var(--dh-bg-input);--color-surface-container:var(--dh-bg-card);--color-surface-container-high:var(--dh-bg-raised);--color-surface-container-highest:var(--dh-bg-hover);
   --color-surface-tint:var(--dh-accent);
   --color-inverse-surface:var(--dh-text);--color-on-inverse-surface:var(--dh-on-accent);
 
@@ -100,10 +111,8 @@
   --color-neutral-status:var(--dh-status-stopped);--color-on-neutral-status:#0e0f10;
   --color-neutral-status-container:var(--dh-border-card);--color-on-neutral-status-container:var(--dh-text-action);
 
-  /* ── HIG materials — not depicted in the mockup (no glass elements);
-     kept as harmonious approximations for degraded-state chrome the
-     mockup doesn't model (reconnecting banner, toolbar blur). ────── */
-  --material-thin:rgba(28,26,37,.62);--material-regular:rgba(16,15,23,.78);--material-thick:rgba(12,11,18,.9);
+  /* ── translucent chrome ─────────────────────────────────────────── */
+  --material-thin:rgba(28,31,38,.62);--material-regular:rgba(15,17,21,.78);--material-thick:rgba(12,14,18,.9);
   --material-blur:20px;--material-blur-thick:36px;
   --material-hairline:rgba(255,255,255,.08);
   --state-hover:var(--dh-bg-hover);--state-press:rgba(255,255,255,.10);--state-selected:var(--dh-bg-row-selected);--state-focus-ring:var(--dh-accent-focus);

@@ -1,33 +1,29 @@
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DiscoveredProject } from "@devhub/shared";
-import { CONFIG_PATH, guessDevCommand, loadConfig, watchConfig, writeConfig } from "./config.js";
-import {
-  findChildServers,
-  inspectDockerContainer,
-  scanDockerContainers,
-  scanExternalProcesses,
-  scanListeningSockets,
-  type DockerInspectState,
-} from "./externalScan.js";
+import { promisify } from "node:util";
+import type { Snapshot } from "@devhub/shared";
+import { AgentRegistry } from "./agentRegistry.js";
+import { ActivityStore } from "./activityStore.js";
+import { CONFIG_PATH, loadConfig, watchConfig, writeConfig } from "./config.js";
+import { inspectDockerContainer, observeProcesses, scanDockerContainers, scanListeningSockets } from "./externalScan.js";
+import { loadPrefs } from "./prefs.js";
 import { ProcessManager } from "./processManager.js";
-import { ProjectStore } from "./projectStore.js";
+import { RepoStore } from "./repoStore.js";
+import { ResourceRegistry } from "./resourceRegistry.js";
 import { createServer } from "./server.js";
-import { loadUiState } from "./uiState.js";
 
-const DETECT_INTERVAL_MS = 5000;
+const execFileAsync = promisify(execFile);
 
-process.on("uncaughtException", (err) => {
-  console.error("[devhub] uncaught exception (daemon stays up):", err);
-});
-process.on("unhandledRejection", (err) => {
-  console.error("[devhub] unhandled rejection (daemon stays up):", err);
-});
+const TICK_MS = 5000;
+const KILL_GRACE_MS = 5000;
+
+process.on("uncaughtException", (err) => console.error("[devhub] uncaught exception (daemon stays up):", err));
+process.on("unhandledRejection", (err) => console.error("[devhub] unhandled rejection (daemon stays up):", err));
 
 const here = dirname(fileURLToPath(import.meta.url));
 const webDistPath = resolve(here, "../../web/dist");
-const repoRoot = resolve(here, "../../..");
 const PORT = Number(process.env.DEVHUB_PORT ?? 4317);
 
 if (!existsSync(CONFIG_PATH)) {
@@ -35,112 +31,206 @@ if (!existsSync(CONFIG_PATH)) {
   writeConfig([], CONFIG_PATH);
 }
 
-let projects;
+let parsed;
 try {
-  projects = loadConfig();
+  parsed = loadConfig();
 } catch (err) {
   console.error(`[devhub] Failed to load config at ${CONFIG_PATH}:`, (err as Error).message);
   process.exit(1);
 }
 
-const store = new ProjectStore(projects);
-const pm = new ProcessManager(store.flatten());
+const store = new RepoStore(parsed.projects, loadPrefs(), parsed.migration);
+const pm = new ProcessManager([]);
+const agents = new AgentRegistry();
+const resources = new ResourceRegistry(agents);
+const activity = new ActivityStore();
 
-const { httpServer, broadcastSnapshot, broadcastDiscovered } = createServer(pm, store, loadUiState(), webDistPath);
+let snapshot: Snapshot | null = null;
+let lastJson = "";
+/** Last container start times, so a docker row keeps its uptime between the
+ *  cheap `docker ps` tick and the more expensive per-container inspect. */
+const dockerStarted = new Map<string, number | null>();
+/** Every orphan the last build saw, so a kill request can be resolved to a
+ *  real pid/container without the client sending one. */
+let orphanIndex = new Map<string, { kind: "process" | "docker"; pid: number | null; container: string | null }>();
+
+/** Coalesces the burst of runtime events a single start/stop produces into
+ *  one rebuild, instead of one per event. */
+let rebuildDebounce: ReturnType<typeof setTimeout> | null = null;
+function requestRebuild() {
+  if (rebuildDebounce) return;
+  rebuildDebounce = setTimeout(() => {
+    rebuildDebounce = null;
+    void rebuild();
+  }, 120);
+}
+
+function withEphemeralState(base: Snapshot): Snapshot {
+  const agentRuns = agents.list();
+  return { ...base, agentRuns, ...resources.snapshot(base.ports, agentRuns) };
+}
+
+let broadcastEphemeralSnapshot = () => {};
+const { httpServer, broadcastSnapshot } = createServer({
+  pm,
+  store,
+  agents,
+  resources,
+  webDistPath,
+  getSnapshot: () => snapshot,
+  requestRebuild,
+  killOrphan,
+  removeContainer,
+  ephemeralStateChanged: () => {
+    if (!snapshot) return;
+    const next = withEphemeralState(snapshot);
+    activity.record(snapshot, next);
+    snapshot = { ...next, activity: activity.list() };
+    lastJson = JSON.stringify(snapshot);
+    broadcastEphemeralSnapshot();
+  },
+});
+broadcastEphemeralSnapshot = broadcastSnapshot;
 
 watchConfig(
   CONFIG_PATH,
   (next) => {
-    console.log(`[devhub] Config changed, reloading ${next.length} project(s)`);
-    store.replaceAll(next);
-    pm.applyConfig(store.flatten());
-    broadcastSnapshot();
+    console.log(`[devhub] Config changed, reloading ${next.projects.length} project(s)`);
+    store.replaceAll(next.projects, next.migration);
+    void rebuild({ worktrees: true });
   },
-  (err) => console.error(`[devhub] Config reload failed, keeping previous config:`, err.message),
+  (err) => console.error("[devhub] Config reload failed, keeping previous config:", err.message),
 );
 
-httpServer.listen(PORT, () => {
-  console.log(`[devhub] listening on http://localhost:${PORT}`);
-});
+httpServer.listen(PORT, () => console.log(`[devhub] listening on http://localhost:${PORT}`));
 
-let scanning = false;
-let lastDiscoveredJson = "";
-setInterval(async () => {
-  if (scanning) return; // lsof/docker can be slow; don't overlap ticks
-  scanning = true;
+// ------------------------------------------------------------------ tick
+
+let building = false;
+let rebuildQueued = false;
+/** Sticky until a build actually consumes it. A queued rebuild used to drop
+ *  the caller's `worktrees` flag, so the 5s refresh was silently lost every
+ *  time it landed mid-build and devhub kept showing worktrees git had already
+ *  pruned. */
+let wantWorktreeRefresh = false;
+
+/** Rebuilds the whole view from scratch: observe, classify, assemble.
+ *
+ *  There is no incremental path and that is deliberate. A service's status
+ *  now depends on what is actually listening, so patching one row from a
+ *  runtime event would leave the rest of the tree describing a world that
+ *  moved on. The full build is cheap (one lsof pass, one docker ps, one
+ *  `git worktree list` per repo) and always self-consistent. */
+async function rebuild({ worktrees = false }: { worktrees?: boolean } = {}) {
+  if (worktrees) wantWorktreeRefresh = true;
+  if (building) {
+    rebuildQueued = true;
+    return;
+  }
+  building = true;
   try {
-    const flat = store.flatten();
-    const candidates = pm.stoppedCandidates();
-    const configuredCwds = new Set(flat.flatMap((s) => (s.kind === "process" ? [s.cwd] : [])));
-    const sockets = await scanListeningSockets();
-    const { matches, discovered: discoveredProcesses } = await scanExternalProcesses(sockets, candidates, configuredCwds, repoRoot);
-    await pm.setDetected(matches);
-
-    // A single running server (e.g. one `pnpm dev` fanning out into several
-    // per-workspace dev servers) can spawn its own children that open their
-    // own listening sockets — fold those in as read-only children of the
-    // server row that spawned them, by actual process ancestry.
-    const childMap = await findChildServers(sockets, pm.runningRootPids());
-    pm.setChildren(childMap);
-    // Anything already showing up as somebody's child by process ancestry is
-    // not a free-floating discovery — without this, deleting a redundant
-    // standalone server for an already-nested child (see ProjectStore docs)
-    // would just have it re-fold right back in as its own top-level server
-    // on the very next tick, duplicating the row that's already nested.
-    const childPids = new Set([...childMap.values()].flatMap((list) => list.map((c) => c.pid)));
-
-    // Anything sitting under a project's root folds straight into that
-    // project as a real (auto-created) server instead of landing in the
-    // flat "Not in any project" tray — this is the whole point of roots.
-    // The command is a best-effort guess (the daemon only knows the cwd of
-    // an already-running process, not its real invocation); it only
-    // matters if the user later stops and restarts it through devhub.
-    const stillDiscoveredProcesses: DiscoveredProject[] = [];
-    const foldedProcesses: { id: string; pid: number; port: number }[] = [];
-    for (const d of discoveredProcesses) {
-      if (childPids.has(d.pid)) continue;
-      const projectId = store.findRootMatch(d.cwd);
-      if (projectId) {
-        const server = store.createServer(projectId, { kind: "process", name: d.suggestedName, command: guessDevCommand(d.cwd), cwd: d.cwd, port: d.port });
-        foldedProcesses.push({ id: server.id, pid: d.pid, port: d.port });
-      } else {
-        stillDiscoveredProcesses.push(d);
-      }
+    if (wantWorktreeRefresh) {
+      wantWorktreeRefresh = false;
+      await store.refreshWorktrees();
     }
-    if (foldedProcesses.length) {
-      pm.applyConfig(store.flatten());
-      // We already know the pid from this scan tick — adopt it immediately
-      // rather than leaving the new server "stopped" until the next tick
-      // re-detects it and someone clicks Track.
-      for (const f of foldedProcesses) await pm.adoptKnown(f.id, f.pid, f.port);
+
+    const sockets = await scanListeningSockets();
+    const [procs, containers] = await Promise.all([observeProcesses(sockets), scanDockerContainers()]);
+    const built = store.build(procs, containers, sockets, pm.states(), dockerStarted);
+
+    // Never kills on removal — see ProcessManager.applyConfig. An id can
+    // vanish simply because a process exited between two ticks.
+    pm.applyConfig(built.runtimes);
+
+    // Adopt anything already running so it comes up controllable with no
+    // click. This is the inverse of the old silent fold: it takes control of
+    // a live process without writing a single line of config.
+    for (const [id, { pid, port }] of built.adoptions) await pm.adoptKnown(id, pid, port);
+
+    const next = withEphemeralState(built.snapshot);
+    activity.record(snapshot, next);
+    snapshot = { ...next, activity: activity.list() };
+    orphanIndex = new Map(
+      [...built.snapshot.projects.flatMap((p) => p.repos.flatMap((r) => r.orphans)), ...built.snapshot.unowned].map((o) => [
+        o.id,
+        { kind: o.kind, pid: o.pid, container: o.container },
+      ]),
+    );
+
+    const json = JSON.stringify(snapshot);
+    if (json !== lastJson) {
+      lastJson = json;
       broadcastSnapshot();
     }
 
-    const configuredContainers = new Set(flat.flatMap((s) => (s.kind === "docker" ? [s.container] : [])));
-    const containers = await scanDockerContainers();
-    const discoveredDocker: DiscoveredProject[] = containers
-      .filter((c) => !configuredContainers.has(c.id) && !c.names.some((n) => configuredContainers.has(n)))
-      .map((c) => ({ kind: "docker" as const, container: c.names[0] ?? c.id, image: c.image, running: c.running, suggestedName: c.names[0] ?? c.id }));
-
-    const discovered = [...stillDiscoveredProcesses, ...discoveredDocker];
-    const json = JSON.stringify(discovered);
-    if (json !== lastDiscoveredJson) {
-      lastDiscoveredJson = json;
-      broadcastDiscovered(discovered);
+    // Precise start times for docker rows, one inspect each. Cheap enough at
+    // this scale and the only way to get StartedAt.
+    if (built.dockerRefs.length) {
+      const results = await Promise.all(built.dockerRefs.map(async (r) => [r.id, await inspectDockerContainer(r.container)] as const));
+      const states = new Map(results);
+      for (const [id, info] of states) if (info) dockerStarted.set(id, info.startedAt);
+      pm.reconcileDocker(new Map([...states].map(([id, info]) => [id, info])));
     }
-
-    const refs = pm.dockerRefs();
-    const inspected = await Promise.all(refs.map(async (r) => [r.id, await inspectDockerContainer(r.container)] as [string, DockerInspectState | null]));
-    pm.reconcileDocker(new Map(inspected));
   } catch (err) {
-    console.error("[devhub] external scan failed:", (err as Error).message);
+    console.error("[devhub] tick failed:", (err as Error).message);
   } finally {
-    scanning = false;
+    building = false;
+    if (rebuildQueued) {
+      rebuildQueued = false;
+      void rebuild();
+    }
   }
-}, DETECT_INTERVAL_MS);
+}
+
+/** Kills a leaked process or stops a stranded container. The one action
+ *  devhub offers that plain `lsof` can't: it already knows which repo the
+ *  thing belonged to before its worktree was deleted. */
+/** `docker rm` for a container that never ran. Destructive and not undoable,
+ *  which is why the UI asks before calling it — but leaving no way at all to
+ *  clear these produced a list that could only grow, which is the same config
+ *  rot the rewrite exists to remove, just expressed as UI. */
+async function removeContainer(container: string) {
+  await execFileAsync("docker", ["rm", container], { timeout: 15000 });
+}
+
+async function killOrphan(id: string) {
+  const o = orphanIndex.get(id);
+  if (!o) throw new Error("That orphan is no longer listed — it may have exited already");
+  if (o.kind === "docker" && o.container) {
+    await execFileAsync("docker", ["stop", "--time", "10", o.container], { timeout: 15000 });
+    return;
+  }
+  if (o.pid == null) throw new Error("No pid recorded for that orphan");
+  try {
+    process.kill(o.pid, "SIGTERM");
+  } catch {
+    return; // already gone
+  }
+  const deadline = Date.now() + KILL_GRACE_MS;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(o.pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  try {
+    process.kill(o.pid, "SIGKILL");
+  } catch {
+    // Raced us to exit.
+  }
+}
+
+void (async () => {
+  await store.refreshWorktrees();
+  await rebuild();
+})();
+
+setInterval(() => void rebuild({ worktrees: true }), TICK_MS);
 
 function shutdown() {
-  console.log("\n[devhub] shutting down, stopping all projects...");
+  console.log("\n[devhub] shutting down, stopping what devhub started...");
   pm.shutdown();
   setTimeout(() => process.exit(0), 300);
 }

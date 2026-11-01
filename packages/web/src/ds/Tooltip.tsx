@@ -60,7 +60,7 @@ export function Tooltip({ label, children }: { label?: string; children: ReactNo
             border: "1px solid var(--dh-border-button)",
             borderRadius: 6,
             padding: "5px 9px",
-            font: "400 10.5px/1 var(--font-mono)",
+            font: "var(--type-caption)",
             color: "var(--dh-text-back)",
             pointerEvents: "none",
             zIndex: 60,

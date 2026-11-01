@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import type { ServerSnapshot, ServerState } from "@devhub/shared";
-import { Button, EmptyState, Icon, IconButton } from "../ds";
+import type { ServiceView } from "@devhub/shared";
+import { Button, EmptyState, Icon, IconButton, useOverlayEntry } from "../ds";
 import { dur, stamp } from "../lib/format";
 import { tildify } from "../lib/paths";
 
@@ -11,14 +11,21 @@ const MAX_BUFFERED_LINES = 2000;
 const DIM = "\x1b[90m";
 const RESET = "\x1b[0m";
 
-function emptyStateProps(state: ServerState | undefined) {
-  if (!state) return { title: "Output cleared", description: "Start the process to stream its output." };
-  if (state.external) {
-    return { title: "Running outside devhub", description: "No output captured yet — Restart to begin streaming its output." };
+function emptyStateProps(service: ServiceView) {
+  if (service.external) {
+    return {
+      title: "running outside devhub",
+      description: service.launchable
+        ? "Devhub adopted this process rather than starting it, so there is no captured output. Restart it here to begin streaming."
+        : "Devhub adopted this process and has no launcher for it, so it cannot be restarted to capture output. Save a launcher first.",
+    };
+  }
+  if (service.status === "running") {
+    return { title: "no output yet", description: "New lines appear as the process writes them." };
   }
   return {
-    title: "Output cleared",
-    description: state.status === "running" ? "New lines appear as the process writes them." : "Start the process to stream its output.",
+    title: service.startedAt ? "output cleared" : "no output yet",
+    description: "Start the process to stream its output.",
   };
 }
 
@@ -33,7 +40,7 @@ interface ServerLogState {
 }
 
 interface Props {
-  server: ServerSnapshot;
+  service: ServiceView;
   addLogListener: (id: string, listener: (lines: string[], isBacklog: boolean) => void) => () => void;
   onClose: () => void;
   onStop: (id: string) => void;
@@ -41,10 +48,22 @@ interface Props {
   now: number;
   compact: boolean;
   medium: boolean;
+  /** Ids with an action in flight. The row buttons already honoured this;
+   *  the drawer's Stop/Restart did not, so they stayed live mid-action in the
+   *  one place you go when something is already misbehaving. */
+  pending: Set<string>;
 }
 
-/** Slide-over drawer showing one server's live output via xterm.js. */
-export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, now, compact, medium }: Props) {
+/** Slide-over drawer showing one service's live output via xterm.js.
+ *
+ *  A service adopted rather than spawned by devhub has no captured output —
+ *  the banner below says so instead of showing an empty terminal that looks
+ *  broken. */
+export function LogDrawer({ service: server, addLogListener, onClose, onStop, onRestart, now, compact, medium, pending }: Props) {
+  const busy = pending.has(server.id);
+  // Joins the shared overlay stack: one scrim, and Escape closes whichever
+  // surface is on top.
+  useOverlayEntry(onClose);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -59,6 +78,9 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
   const [wrap, setWrap] = useState(true);
   const [paused, setPaused] = useState(false);
   const [lineCount, setLineCount] = useState(0);
+  // Surfaced so a paused stream is distinguishable from a hung process — the
+  // backlog was tracked and never shown, so the terminal simply stopped.
+  const [queuedCount, setQueuedCount] = useState(0);
 
   function getState(id: string): ServerLogState {
     let s = perServerRef.current.get(id);
@@ -105,14 +127,20 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
   // Terminal instance lives for the component's lifetime; content is swapped
   // per-server (see the subscribe effect below).
   useEffect(() => {
+    const tokens = getComputedStyle(document.documentElement);
+    const token = (name: string, fallback: string) => tokens.getPropertyValue(name).trim() || fallback;
     const term = new Terminal({
       convertEol: true,
-      fontFamily: '"JetBrains Mono", "SF Mono", Menlo, monospace',
-      fontSize: 12,
+      fontFamily: token("--font-mono", '"IBM Plex Mono", "SFMono-Regular", "Cascadia Mono", Consolas, monospace'),
+      fontSize: 13,
       lineHeight: 1.5,
-      // brightBlack backs the DIM-wrapped timestamp gutter (ANSI 90);
-      // foreground is the mockup's exact log-message color.
-      theme: { background: "#100f17", foreground: "#b5b0c8", brightBlack: "#565169" },
+      // xterm requires resolved color values, so bridge it to the shared CSS
+      // tokens when the terminal is created.
+      theme: {
+        background: token("--dh-bg-rail-footer", "#0c0e12"),
+        foreground: token("--dh-text-log-msg", "#b7bdc6"),
+        brightBlack: token("--dh-text-faint", "#5d6570"),
+      },
       disableStdin: true,
       scrollback: MAX_BUFFERED_LINES,
     });
@@ -162,6 +190,7 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
       }
       if (state.paused) {
         state.queued.push(...entries);
+        setQueuedCount(state.queued.length);
         return;
       }
       state.lines.push(...entries);
@@ -176,6 +205,7 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
     const state = getState(server.id);
     state.paused = !state.paused;
     setPaused(state.paused);
+    setQueuedCount(state.paused ? state.queued.length : 0);
     if (!state.paused && state.queued.length) {
       state.lines.push(...state.queued);
       if (state.lines.length > MAX_BUFFERED_LINES) state.lines.splice(0, state.lines.length - MAX_BUFFERED_LINES);
@@ -191,26 +221,15 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
     renderState(state);
   }
 
-  const { state } = server;
-  const stopDisabled = state.status === "stopped";
+  const stopDisabled = server.status === "stopped";
 
   return (
     <>
       <div
-        data-dh-scrim="1"
-        onClick={onClose}
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "var(--color-scrim)",
-          opacity: "var(--scrim-alpha)",
-          zIndex: 40,
-          animation: "dh-scrim-in var(--duration-normal) var(--ease-out)",
-        }}
-      />
-      <div
         data-dh-drawer="1"
-        role="complementary"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${server.displayName} output`}
         style={{
           position: "fixed",
           top: 0,
@@ -223,7 +242,10 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
           zIndex: 41,
           display: "flex",
           flexDirection: "column",
-          background: "var(--dh-bg-rail)",
+          // Chrome floats above the page; only the terminal canvas remains at
+          // the darkest surface level.
+          background: "var(--dh-surface-overlay)",
+          boxShadow: "var(--dh-shadow-dialog)",
           borderLeft: "1px solid var(--dh-border-control)",
           animation: "dh-drawer-in var(--duration-normal) var(--ease-out)",
         }}
@@ -244,69 +266,54 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              font: "500 15px/1 var(--font-ui)",
+              font: "var(--type-section-title)",
               color: "var(--dh-text)",
             }}
           >
-            {server.name}
+            {server.displayName}
           </span>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", font: "400 11px/1 var(--font-mono)", color: "var(--dh-text-host)" }}>
-            {state.port ? `localhost:${state.port}` : server.kind === "docker" ? server.container : tildify(server.cwd)}
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", font: "400 var(--type-meta)/1 var(--font-mono)", color: "var(--dh-text-host)" }}>
+            {server.ports.length ? `localhost:${server.ports[0]}` : server.kind === "docker" ? server.container : tildify(server.cwd)}
           </span>
         </div>
-        <button
-          type="button"
-          aria-label="Close log stream"
-          title="Close log stream"
-          onClick={onClose}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--dh-bg-hover)";
-            e.currentTarget.style.color = "var(--dh-text-bright)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = "var(--dh-text-action)";
-          }}
-          style={{
-            width: 28,
-            height: 28,
-            border: "1px solid var(--dh-border-control)",
-            background: "transparent",
-            borderRadius: 6,
-            color: "var(--dh-text-action)",
-            cursor: "pointer",
-            font: "400 13px/1 var(--font-mono)",
-            padding: 0,
-            flex: "0 0 auto",
-            transition: "var(--transition-state)",
-          }}
-        >
-          ×
-        </button>
+        <IconButton icon="close" label="Close log stream" size="md" onClick={onClose} />
       </div>
 
       <div
         style={{
           flex: "0 0 auto",
-          height: 34,
+          minHeight: 44,
           display: "flex",
           alignItems: "center",
           gap: 6,
           padding: "0 8px 0 12px",
-          background: "var(--dh-bg-card)",
+          background: "var(--dh-surface-overlay)",
           borderBottom: "1px solid var(--dh-border-hairline)",
         }}
       >
-        <Button variant="secondary" size="sm" icon="restart_alt" disabled={stopDisabled} onClick={() => onRestart(server.id)}>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon="restart_alt"
+          loading={busy}
+          disabled={stopDisabled || !server.launchable}
+          onClick={() => onRestart(server.id)}
+        >
           Restart
         </Button>
-        <Button variant="secondary" size="sm" icon="stop" disabled={stopDisabled} onClick={() => onStop(server.id)}>
+        <Button variant="secondary" size="sm" icon="stop" loading={busy} disabled={stopDisabled} onClick={() => onStop(server.id)}>
           Stop
         </Button>
         <span style={{ flex: 1 }} />
         <IconButton icon="schedule" label="Toggle timestamps" size="sm" selected={timestamps} onClick={() => setTimestamps((t) => !t)} />
         <IconButton icon="wrap_text" label="Toggle soft wrap" size="sm" selected={wrap} onClick={() => setWrap((w) => !w)} />
-        <IconButton icon="pause" label="Pause stream" size="sm" selected={paused} onClick={togglePaused} />
+        <IconButton
+          icon={paused ? "play_arrow" : "pause"}
+          label={paused ? "Resume stream" : "Pause stream"}
+          size="sm"
+          selected={paused}
+          onClick={togglePaused}
+        />
         <IconButton icon="ink_eraser" label="Clear output" size="sm" onClick={clearLog} />
       </div>
 
@@ -317,9 +324,9 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
           display: "flex",
           alignItems: "center",
           padding: "0 12px",
-          background: "var(--dh-bg-card)",
+          background: "var(--dh-surface-overlay)",
           borderBottom: "1px solid var(--dh-border-hairline)",
-          font: "400 11px/1 var(--font-mono)",
+          font: "400 var(--type-meta)/1 var(--font-mono)",
           color: "var(--dh-text-secondary)",
           fontVariantNumeric: "tabular-nums",
           overflow: "hidden",
@@ -328,28 +335,67 @@ export function LogDrawer({ server, addLogListener, onClose, onStop, onRestart, 
       >
         <Icon name={server.kind === "docker" ? "inventory_2" : "folder"} size={11} color="var(--dh-text-muted)" style={{ flex: "0 0 auto", marginRight: 6 }} />
         <span style={{ color: "var(--dh-text)", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {server.kind === "docker" ? server.container : server.command}
+          {server.kind === "docker" ? server.container : (server.command ?? tildify(server.cwd))}
         </span>
         <span style={{ color: "var(--dh-text-muted)", padding: "0 8px" }}>·</span>
-        <span>{state.pid ? `pid ${state.pid}` : "pid —"}</span>
+        <span>{server.pid ? `pid ${server.pid}` : "pid —"}</span>
         <span style={{ color: "var(--dh-text-muted)", padding: "0 8px" }}>·</span>
-        <span>up {state.startedAt ? dur(now - state.startedAt) : "—"}</span>
+        <span>{server.status === "running" && server.startedAt ? `up ${dur(now - server.startedAt)}` : "not running"}</span>
       </div>
+
+      {/* Its own wrapped line, not a fifth segment in a 26px nowrap strip that
+          hard-cut it mid-word with no ellipsis — this is the sentence that
+          explains why the terminal below is empty, so it has to survive. */}
+      {server.external && (
+        <div
+          style={{
+            flex: "0 0 auto",
+            padding: "7px 12px",
+            background: "var(--dh-surface-overlay)",
+            borderBottom: "1px solid var(--dh-border-hairline)",
+            font: "var(--type-meta-text)",
+            color: "var(--dh-status-starting)",
+          }}
+        >
+          {server.launchable
+            ? "DevHub adopted this process, so earlier output is unavailable. Restart it here to begin capturing logs."
+            : "DevHub adopted this process and has no launcher, so it cannot restart it to capture logs. Save a launcher first."}
+        </div>
+      )}
+
+      {paused && (
+        <button
+          type="button"
+          onClick={togglePaused}
+          style={{
+            flex: "0 0 auto",
+            textAlign: "left",
+            padding: "7px 12px",
+            border: "none",
+            borderBottom: "1px solid var(--dh-border-hairline)",
+            background: "var(--dh-flag-bg)",
+            color: "var(--dh-status-starting)",
+            font: "var(--type-meta-text)",
+            cursor: "pointer",
+          }}
+        >
+          Paused{queuedCount > 0 ? ` · ${queuedCount} line${queuedCount === 1 ? "" : "s"} waiting` : ""}. Click to resume.
+        </button>
+      )}
 
       <div style={{ flex: 1, minHeight: 0, position: "relative", background: "var(--dh-bg-rail)" }}>
         <div style={{ position: "absolute", inset: 0, padding: "8px 0" }} ref={containerRef} />
         {lineCount === 0 && (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-            <EmptyState {...emptyStateProps(state)} />
+            <EmptyState {...emptyStateProps(server)} />
           </div>
         )}
       </div>
 
-      <div style={{ flex: "0 0 auto", padding: "12px 22px", borderTop: "1px solid var(--dh-border-hairline)", font: "400 10px/1 var(--font-mono)", color: "var(--dh-text-faint)", letterSpacing: "0.04em" }}>
+      <div style={{ flex: "0 0 auto", padding: "12px 22px", borderTop: "1px solid var(--dh-border-hairline)", font: "400 var(--type-micro)/1 var(--font-mono)", color: "var(--dh-text-secondary)", letterSpacing: "0.04em" }}>
         tail -f · last {MAX_BUFFERED_LINES} lines
       </div>
       </div>
     </>
   );
 }
-

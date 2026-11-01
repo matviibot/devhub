@@ -1,7 +1,17 @@
 /* Tonal elevation (M3): panels separate by surface-tint shift, not shadow.
    Shadows exist only for things that truly float over content (menus, dialogs,
    tooltips) and stay soft and low-contrast, HIG-style. */
+/* The floating surfaces below were each authored with a bespoke shadow and
+   all of them reused --dh-bg-card, the RESTING card fill — so a menu, a
+   dialog and a toast sat at the same apparent height as the rows underneath
+   them, and the log drawer was darker than the page it floated over. These
+   three steps are now the only surfaces a floating layer may use. */
 :root{
+  --dh-surface-raised:#242830;   /* menus, toasts, tooltips */
+  --dh-surface-overlay:#1b1e25;  /* dialogs, the log drawer chrome */
+  --dh-shadow-menu:0 10px 28px rgba(4,6,9,.55);
+  --dh-shadow-dialog:0 24px 60px rgba(4,6,9,.65);
+
   --elevation-0:none;
   --elevation-1:0 1px 2px rgba(0,0,0,.18);
   --elevation-2:0 2px 6px rgba(0,0,0,.22),0 0 0 var(--hairline) var(--material-hairline);

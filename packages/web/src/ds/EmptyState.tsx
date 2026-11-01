@@ -35,9 +35,9 @@ export function EmptyState({ title, description, markColor = "var(--dh-border-bu
       {...rest}
     >
       <span style={{ width: sm ? 22 : 30, height: sm ? 22 : 30, border: `1px solid ${markColor}`, borderRadius: markRadius, display: "block", flex: "0 0 auto" }} />
-      {title ? <div style={{ font: `600 ${sm ? 12.5 : 14}px/1.3 var(--font-ui)`, letterSpacing: "-0.015em", color: "var(--dh-text)" }}>{title}</div> : null}
+      {title ? <div style={{ font: sm ? "var(--type-row-title)" : "var(--type-section-title)", letterSpacing: "var(--tracking-row-title)", color: "var(--dh-text)" }}>{title}</div> : null}
       {description ? (
-        <div style={{ font: `400 11px/1.55 var(--font-mono)`, color: "var(--dh-text-host)", maxWidth: 240 }}>{description}</div>
+        <div style={{ font: "var(--type-meta-text)", color: "var(--dh-text-host)", maxWidth: 280 }}>{description}</div>
       ) : null}
       {action || secondaryAction ? (
         <div style={{ display: "flex", gap: 8, marginTop: sm ? 2 : 4 }}>

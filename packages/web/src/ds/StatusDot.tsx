@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
-import type { ProcessStatus } from "@devhub/shared";
+import type { ServiceStatus } from "@devhub/shared";
 
-export const STATUS_ROLES: Record<ProcessStatus, { color: string; container: string; on: string; label: string; pulse: boolean }> = {
+export const STATUS_ROLES: Record<ServiceStatus, { color: string; container: string; on: string; label: string; pulse: boolean }> = {
   running: { color: "var(--status-running)", container: "var(--status-running-container)", on: "var(--status-on-running-container)", label: "Running", pulse: false },
   starting: { color: "var(--status-starting)", container: "var(--status-starting-container)", on: "var(--status-on-starting-container)", label: "Starting", pulse: true },
   crashed: { color: "var(--status-crashed)", container: "var(--status-crashed-container)", on: "var(--status-on-crashed-container)", label: "Crashed", pulse: false },
@@ -9,7 +9,7 @@ export const STATUS_ROLES: Record<ProcessStatus, { color: string; container: str
 };
 
 interface Props {
-  status?: ProcessStatus;
+  status?: ServiceStatus;
   size?: number;
   ring?: boolean;
   style?: CSSProperties;
@@ -23,6 +23,9 @@ export function StatusDot({ status = "stopped", size = 8, ring = false, style, .
     <span
       role="img"
       aria-label={r.label}
+      // Tagged so prefers-reduced-motion can stop an indefinite pulse — an
+      // animation that never ends is the clearest case for that setting.
+      data-dh-pulse={r.pulse ? "1" : undefined}
       style={{
         display: "inline-block",
         width: size,
@@ -30,8 +33,12 @@ export function StatusDot({ status = "stopped", size = 8, ring = false, style, .
         borderRadius: "var(--radius-full)",
         flex: "0 0 auto",
         background: hollow ? "transparent" : r.color,
+        // 2px, not 1.5px. Hollow stays the shape distinction between stopped
+        // and running, but as a 1.5px annulus in a 2.35:1 tone it was the
+        // faintest mark in the UI — and "what is NOT running" is half of what
+        // this dashboard is for. The tone moved to 4.8:1 in the token.
         boxShadow:
-          [hollow ? `inset 0 0 0 1.5px ${r.color}` : null, ring ? `0 0 0 3px ${r.container}` : null]
+          [hollow ? `inset 0 0 0 2px ${r.color}` : null, ring ? `0 0 0 3px ${r.container}` : null]
             .filter(Boolean)
             .join(",") || undefined,
         animation: r.pulse ? "ds-pulse 1.4s var(--ease-standard) infinite" : undefined,

@@ -1,17 +1,40 @@
 {
   "projects": [
     {
+      "id": "my-app",
       "name": "My App",
-      "root": "/Users/you/dev/my-app",
-      "servers": [
-        { "name": "web", "command": "npm run dev", "dir": "apps/web" },
-        { "name": "api", "command": "npm run dev", "dir": "services/api", "port": 8080 }
+      "icon": "public/icon.svg",
+      "repos": [
+        {
+          "path": "~/dev/my-app",
+          "launchers": [
+            {
+              "role": "web",
+              "cmd": "npm run dev",
+              "dir": "apps/web",
+              "policy": {
+                "ports": "alloc",
+                "range": [3100, 3199],
+                "env": "PORT"
+              }
+            },
+            {
+              "role": "api",
+              "cmd": "npm run dev",
+              "dir": "services/api",
+              "policy": { "ports": "fixed" }
+            }
+          ]
+        }
       ]
     },
     {
-      "name": "Docs",
-      "root": "/Users/you/dev/docs",
-      "servers": [{ "name": "docs", "command": "npm start", "dir": "." }]
+      "id": "product",
+      "name": "Product",
+      "repos": [
+        { "path": "~/dev/product-api", "label": "API", "launchers": [] },
+        { "path": "~/dev/product-web", "label": "Web", "launchers": [] }
+      ]
     }
   ]
 }

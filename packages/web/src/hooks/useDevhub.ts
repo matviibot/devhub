@@ -1,13 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ClientMessage, DetectedScript, DirectoryEntry, DiscoveredProject, DockerContainerInfo, ProjectMeta, ProjectRoot, ServerMessage, ServerSnapshot, UiState } from "@devhub/shared";
+import type {
+  ClientMessage,
+  DetectedScript,
+  DirectoryEntry,
+  Launcher,
+  PortPolicy,
+  Prefs,
+  RepoInput,
+  ServerMessage,
+  Snapshot,
+} from "@devhub/shared";
 
 const RECONNECT_DELAY_MS = 1500;
-const EMPTY_UI_STATE: UiState = { ignoredDiscovered: [], collapsedGroups: [] };
-// How long an optimistic project or a start/stop/restart is allowed to sit
-// unconfirmed before we give up on it, roll the UI back, and surface an
-// error — guards against a dropped WS message leaving the UI stuck showing
-// something that never actually happened.
-const PENDING_TIMEOUT_MS = 10000;
+// How long a start/stop/restart may sit unconfirmed before the spinner is
+// rolled back — guards against a dropped frame leaving a button stuck.
+const PENDING_TIMEOUT_MS = 15000;
+
+const EMPTY_PREFS: Prefs = { renames: {}, roleOrder: {}, projectOrder: [], collapsed: [] };
+const EMPTY: Snapshot = {
+  projects: [],
+  activity: [],
+  agentRuns: [],
+  portReservations: [],
+  serviceAnnouncements: [],
+  unowned: [],
+  alerts: [],
+  ports: [],
+  prefs: EMPTY_PREFS,
+  migration: [],
+  probes: { lsof: true, docker: true },
+  neverStarted: [],
+};
 
 export interface DirectoryListing {
   path: string;
@@ -24,38 +47,20 @@ interface Detected {
   hasPackageJson: boolean;
 }
 
-export type ServerInput =
-  | { kind: "process"; name: string; command: string; cwd: string; port?: number }
-  | { kind: "docker"; name: string; container: string; port?: number };
-
 export function useDevhub() {
   const [connected, setConnected] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
-  const [projects, setProjects] = useState<ProjectMeta[]>([]);
-  const [servers, setServers] = useState<ServerSnapshot[]>([]);
+  const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY);
   const [error, setError] = useState<string | null>(null);
   const [detected, setDetected] = useState<Detected | null>(null);
-  const [discovered, setDiscovered] = useState<DiscoveredProject[]>([]);
-  const [uiState, setUiStateLocal] = useState<UiState>(EMPTY_UI_STATE);
   const [directoryListing, setDirectoryListing] = useState<DirectoryListing | null>(null);
-  const [containers, setContainers] = useState<DockerContainerInfo[]>([]);
-  const [containersFetchedAt, setContainersFetchedAt] = useState<number | null>(null);
-  const [pendingServerActions, setPendingServerActions] = useState<Set<string>>(new Set());
+  const [pending, setPending] = useState<Set<string>>(new Set());
+
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedRef = useRef<Set<string>>(new Set());
-  // Optimistic-create bookkeeping: a project created client-side gets a
-  // temp-id placeholder in `projects` immediately, so the "create project ->
-  // chain into add-server" flow doesn't have to sit and wait for a full WS
-  // round trip before it can proceed. `pendingProjectNames` holds temp ids
-  // still awaiting the daemon's confirming snapshot; `resolvedTempIds` keeps
-  // the temp-id -> real-id mapping around afterward so any in-flight
-  // createServer call aimed at the temp id still lands on the right project.
-  const pendingProjectNames = useRef<Map<string, string>>(new Map());
-  const resolvedTempIds = useRef<Map<string, string>>(new Map());
   const pendingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  // Log lines are pushed straight to xterm.js by listeners rather than kept
-  // in React state — they're append-only and React re-renders would need to
-  // diff trimmed arrays, which is exactly the kind of bookkeeping this avoids.
+  // Log lines go straight to xterm via listeners rather than through React
+  // state — they're append-only and high-volume.
   const logListenersRef = useRef<Map<string, Set<LogListener>>>(new Map());
 
   useEffect(() => {
@@ -71,102 +76,53 @@ export function useDevhub() {
       ws.onopen = () => {
         setConnected(true);
         setReconnectAttempt(0);
-        for (const id of subscribedRef.current) send({ type: "subscribeLogs", id });
+        for (const id of subscribedRef.current) ws.send(JSON.stringify({ type: "subscribeLogs", id }));
       };
 
       ws.onmessage = (event) => {
         const msg: ServerMessage = JSON.parse(event.data);
         switch (msg.type) {
           case "snapshot": {
-            // Reconcile any still-pending optimistic project inserts against
-            // the daemon's authoritative list, matched by name (same trick
-            // the undo/chain-to-add-server flows already use elsewhere).
-            // Anything not yet confirmed stays appended so it doesn't
-            // flicker out of the list if this snapshot was triggered by an
-            // unrelated mutation.
-            const stillPending: ProjectMeta[] = [];
-            for (const [tempId, name] of pendingProjectNames.current) {
-              const real = msg.projects.find((p) => p.name === name);
-              if (real) {
-                resolvedTempIds.current.set(tempId, real.id);
-                pendingProjectNames.current.delete(tempId);
-                clearTimeout(pendingTimers.current.get(tempId));
-                pendingTimers.current.delete(tempId);
-              } else {
-                stillPending.push({ id: tempId, name, roots: [] });
-              }
-            }
-            setProjects(stillPending.length ? [...msg.projects, ...stillPending] : msg.projects);
-            setServers(msg.servers);
-            setUiStateLocal(msg.uiState);
+            const { type, ...snap } = msg;
+            // Tolerate a daemon older than this bundle. The daemon serves the
+            // web build from disk, so a long-running daemon process can be
+            // serving a newer UI than itself until it is restarted — and a
+            // snapshot missing `probes`/`neverStarted` would otherwise blank
+            // the page on the first message.
+            setSnapshot({
+              ...EMPTY,
+              ...snap,
+              probes: snap.probes ?? EMPTY.probes,
+              neverStarted: snap.neverStarted ?? EMPTY.neverStarted,
+              agentRuns: (snap.agentRuns ?? []).map((run) => ({ ...run, checks: run.checks ?? [] })),
+              ports: (snap.ports ?? []).map((p) => ({ ...p, holders: p.holders ?? [] })),
+            });
+            // Deliberately does NOT clear pending. The daemon rebroadcasts on
+            // its 5s tick whenever the observed port table changes, which on a
+            // real machine is most ticks — so treating any snapshot as the
+            // confirmation cleared the spinner on unrelated churn, seconds
+            // before the row it belonged to actually changed. Spinners are
+            // cleared by `actionDone`, which names the ids it resolved.
             break;
           }
-          case "serverUpdated":
-            setServers((prev) => {
-              const idx = prev.findIndex((s) => s.id === msg.server.id);
-              if (idx === -1) return [...prev, msg.server];
-              const next = [...prev];
-              next[idx] = msg.server;
-              return next;
-            });
-            setPendingServerActions((prev) => {
-              if (!prev.has(msg.server.id)) return prev;
-              const next = new Set(prev);
-              next.delete(msg.server.id);
-              return next;
-            });
-            break;
-          case "serverRemoved":
-            setServers((prev) => prev.filter((s) => s.id !== msg.id));
-            setPendingServerActions((prev) => {
-              if (!prev.has(msg.id)) return prev;
-              const next = new Set(prev);
-              next.delete(msg.id);
-              return next;
-            });
-            break;
           case "logBacklog":
-            for (const listener of logListenersRef.current.get(msg.id) ?? []) {
-              listener(msg.lines, true);
-            }
+            for (const l of logListenersRef.current.get(msg.id) ?? []) l(msg.lines, true);
             break;
           case "log":
-            for (const listener of logListenersRef.current.get(msg.id) ?? []) {
-              listener(msg.lines, false);
-            }
+            for (const l of logListenersRef.current.get(msg.id) ?? []) l(msg.lines, false);
             break;
           case "scriptsDetected":
             setDetected({ cwd: msg.cwd, scripts: msg.scripts, hasPackageJson: msg.hasPackageJson });
             break;
-          case "commandError":
-            setError(msg.message);
-            // We don't get a correlation id back for which action failed, so
-            // roll back every still-unconfirmed optimistic project — this is
-            // a single local daemon, in practice there's at most one create
-            // in flight at a time.
-            if (pendingProjectNames.current.size) {
-              const staleIds = new Set(pendingProjectNames.current.keys());
-              for (const id of staleIds) {
-                clearTimeout(pendingTimers.current.get(id));
-                pendingTimers.current.delete(id);
-              }
-              pendingProjectNames.current.clear();
-              setProjects((prev) => prev.filter((p) => !staleIds.has(p.id)));
-            }
-            setPendingServerActions(new Set());
-            break;
-          case "discovered":
-            setDiscovered(msg.items);
-            break;
-          case "uiState":
-            setUiStateLocal(msg.state);
-            break;
           case "directoryListing":
             setDirectoryListing(msg);
             break;
-          case "containerList":
-            setContainers(msg.items);
-            setContainersFetchedAt(Date.now());
+          case "actionDone":
+            resolvePending(msg.ids);
+            break;
+          case "commandError":
+            setError(msg.message);
+            setPending(new Set());
             break;
         }
       };
@@ -189,79 +145,93 @@ export function useDevhub() {
     };
   }, []);
 
-  const send = useCallback((msg: ClientMessage) => {
+  /** Returns false when the socket is not open, so callers can refuse rather
+   *  than pretend. Previously this dropped the message silently while `act`
+   *  still set a spinner, producing fifteen convincing seconds of nothing. */
+  const send = useCallback((msg: ClientMessage): boolean => {
     const ws = wsRef.current;
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+    if (ws?.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(msg));
+    return true;
   }, []);
 
-  const subscribeLogs = useCallback(
-    (id: string) => {
-      if (subscribedRef.current.has(id)) return;
-      subscribedRef.current.add(id);
-      send({ type: "subscribeLogs", id });
-    },
-    [send],
-  );
-
-  /** Registers a listener for a server's log lines; returns an unsubscribe fn. */
   const addLogListener = useCallback(
     (id: string, listener: LogListener) => {
       if (!logListenersRef.current.has(id)) logListenersRef.current.set(id, new Set());
       logListenersRef.current.get(id)!.add(listener);
-      subscribeLogs(id);
+      if (!subscribedRef.current.has(id)) {
+        subscribedRef.current.add(id);
+        send({ type: "subscribeLogs", id });
+      }
       return () => {
         logListenersRef.current.get(id)?.delete(listener);
       };
     },
-    [subscribeLogs],
+    [send],
   );
 
-  /** Resolves a possibly-optimistic temp project id to its real daemon id,
-   *  once known — passes real ids straight through unchanged. */
-  const resolveProjectId = useCallback((id: string) => resolvedTempIds.current.get(id) ?? id, []);
+  /** Clears the spinner for exactly the ids the daemon says it finished. */
+  const resolvePending = useCallback((ids: string[]) => {
+    for (const id of ids) {
+      const t = pendingTimers.current.get(id);
+      if (t) {
+        clearTimeout(t);
+        pendingTimers.current.delete(id);
+      }
+    }
+    setPending((prev) => {
+      if (!prev.size) return prev;
+      const next = new Set(prev);
+      let changed = false;
+      for (const id of ids) changed = next.delete(id) || changed;
+      return changed ? next : prev;
+    });
+  }, []);
 
-  /** Fires `id`-scoped WS messages that flip a server's status (start/stop/
-   *  restart) with an immediate local "pending" flag, so the button shows a
-   *  spinner right away instead of sitting inert until a status update
-   *  comes back — Docker actions in particular can take a couple seconds. */
-  const withPendingAction = useCallback(
-    (id: string, msg: ClientMessage) => {
-      setPendingServerActions((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
-      send(msg);
-      clearTimeout(pendingTimers.current.get(id));
-      pendingTimers.current.set(
-        id,
-        setTimeout(() => {
-          pendingTimers.current.delete(id);
-          setPendingServerActions((prev) => {
-            if (!prev.has(id)) return prev;
-            const next = new Set(prev);
-            next.delete(id);
-            return next;
-          });
-        }, PENDING_TIMEOUT_MS),
-      );
+  /** Fires an action and shows a spinner on those rows immediately — docker
+   *  in particular can take seconds to respond. Refuses outright when the
+   *  socket is closed: a spinner for a message that was never sent is worse
+   *  than a disabled button, because you believe the action happened.
+   *  `ids` covers bulk actions, where every member row should spin, not just
+   *  the synthetic `wt:` key nothing renders. */
+  const act = useCallback(
+    (ids: string | string[], msg: ClientMessage) => {
+      const list = typeof ids === "string" ? [ids] : ids;
+      if (!send(msg)) {
+        setError("Not connected to the devhub daemon — nothing was sent.");
+        return;
+      }
+      setPending((prev) => {
+        const next = new Set(prev);
+        for (const id of list) next.add(id);
+        return next;
+      });
+      for (const id of list) {
+        clearTimeout(pendingTimers.current.get(id));
+        pendingTimers.current.set(
+          id,
+          setTimeout(() => {
+            pendingTimers.current.delete(id);
+            setPending((prev) => {
+              if (!prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          }, PENDING_TIMEOUT_MS),
+        );
+      }
     },
     [send],
   );
 
-  const createProject = useCallback(
-    (name: string, roots: ProjectRoot[] = []) => {
-      const tempId = `temp-${crypto.randomUUID()}`;
-      pendingProjectNames.current.set(tempId, name);
-      setProjects((prev) => [...prev, { id: tempId, name, roots }]);
-      send({ type: "createProject", name, roots });
-      pendingTimers.current.set(
-        tempId,
-        setTimeout(() => {
-          if (!pendingProjectNames.current.has(tempId)) return;
-          pendingProjectNames.current.delete(tempId);
-          pendingTimers.current.delete(tempId);
-          setProjects((prev) => prev.filter((p) => p.id !== tempId));
-          setError(`Couldn't create "${name}" — no response from the daemon`);
-        }, PENDING_TIMEOUT_MS),
-      );
-      return tempId;
+  const setPrefs = useCallback(
+    (update: (prev: Prefs) => Prefs) => {
+      setSnapshot((s) => {
+        const prefs = update(s.prefs);
+        send({ type: "setPrefs", prefs });
+        return { ...s, prefs };
+      });
     },
     [send],
   );
@@ -269,56 +239,44 @@ export function useDevhub() {
   return {
     connected,
     reconnectAttempt,
-    projects,
-    servers,
+    ...snapshot,
     error,
     clearError: () => setError(null),
     detected,
-    discovered,
-    uiState,
     directoryListing,
-    setUiState: (state: UiState) => send({ type: "setUiState", state }),
+    pending,
     addLogListener,
-    pendingServerActions,
-    start: (id: string) => withPendingAction(id, { type: "start", id }),
-    stop: (id: string) => withPendingAction(id, { type: "stop", id }),
-    restart: (id: string) => withPendingAction(id, { type: "restart", id }),
-    startProject: (projectId: string) => send({ type: "startProject", projectId }),
-    stopProject: (projectId: string) => send({ type: "stopProject", projectId }),
-    createProject,
-    updateProject: (id: string, name: string, roots: ProjectRoot[]) => send({ type: "updateProject", id, name, roots }),
+
+    start: (id: string) => act(id, { type: "start", id }),
+    stop: (id: string) => act(id, { type: "stop", id }),
+    restart: (id: string) => act(id, { type: "restart", id }),
+    startWorktree: (worktreePath: string, memberIds: string[] = []) =>
+      act([`wt:${worktreePath}`, ...memberIds], { type: "startWorktree", worktreePath }),
+    stopWorktree: (worktreePath: string, memberIds: string[] = []) =>
+      act([`wt:${worktreePath}`, ...memberIds], { type: "stopWorktree", worktreePath }),
+    startProject: (projectId: string, memberIds: string[] = []) =>
+      act([`project:${projectId}`, ...memberIds], { type: "startProject", projectId }),
+    stopProject: (projectId: string, memberIds: string[] = []) =>
+      act([`project:${projectId}`, ...memberIds], { type: "stopProject", projectId }),
+    killOrphan: (id: string) => act(id, { type: "killOrphan", id }),
+    removeContainer: (targetId: string, container: string) => act(targetId, { type: "removeContainer", container }),
+
+    createProject: (name: string, repos: RepoInput[] = []) => send({ type: "createProject", name, repos }),
+    updateProject: (id: string, name: string, repos: RepoInput[]) => send({ type: "updateProject", id, name, repos }),
     deleteProject: (id: string) => send({ type: "deleteProject", id }),
-    createServer: (projectId: string, input: ServerInput) => {
-      const id = resolveProjectId(projectId);
-      send(
-        input.kind === "docker"
-          ? { type: "createServer", projectId: id, kind: "docker", name: input.name, container: input.container, port: input.port }
-          : { type: "createServer", projectId: id, kind: "process", name: input.name, command: input.command, cwd: input.cwd, port: input.port },
-      );
-    },
-    updateServer: (id: string, input: ServerInput) =>
-      send(
-        input.kind === "docker"
-          ? { type: "updateServer", id, kind: "docker", name: input.name, container: input.container, port: input.port }
-          : { type: "updateServer", id, kind: "process", name: input.name, command: input.command, cwd: input.cwd, port: input.port },
-      ),
-    deleteServer: (id: string) => send({ type: "deleteServer", id }),
+
+    saveLauncher: (projectId: string, repoPath: string, launcher: Launcher, replacingRole?: string) =>
+      send({ type: "saveLauncher", projectId, repoPath, launcher, replacingRole }),
+    deleteLauncher: (projectId: string, repoPath: string, role: string) => send({ type: "deleteLauncher", projectId, repoPath, role }),
+    setComposePolicy: (projectId: string, repoPath: string, policy: PortPolicy | null) => send({ type: "setComposePolicy", projectId, repoPath, policy }),
+    dismissMigration: () => send({ type: "dismissMigration" }),
+
     detectScripts: (cwd: string) => send({ type: "detectScripts", cwd }),
-    track: (id: string) => send({ type: "track", id }),
-    killChild: (pid: number, ownerServerId?: string) => withPendingAction(`child:${pid}`, { type: "killChild", pid, ownerServerId }),
+    setPrefs,
     reorderProjects: (ids: string[]) => send({ type: "reorderProjects", ids }),
-    reorderServers: (projectId: string, ids: string[]) => send({ type: "reorderServers", projectId: resolveProjectId(projectId), ids }),
     listDirectory: (path?: string) => send({ type: "listDirectory", path }),
-    containers,
-    containersFetchedAt,
-    listContainers: () => send({ type: "listContainers" }),
     revealPath: (path: string) => send({ type: "revealPath", path }),
-    /** Optimistic: flips the server's projectId locally right away (drag-drop
-     *  reassignment reads back from `servers` immediately) — the daemon's
-     *  next snapshot just confirms the same value. */
-    moveServer: (id: string, projectId: string) => {
-      setServers((prev) => prev.map((s) => (s.id === id ? { ...s, projectId } : s)));
-      send({ type: "moveServer", id, projectId });
-    },
   };
 }
+
+export type Devhub = ReturnType<typeof useDevhub>;

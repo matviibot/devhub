@@ -10,6 +10,9 @@
   },
   "dependencies": {
     "@devhub/shared": "*",
+    "@fontsource/ibm-plex-mono": "^5.2.6",
+    "@fontsource/ibm-plex-sans": "^5.2.6",
+    "@fontsource/material-symbols-outlined": "^5.3.9",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "framer-motion": "^13.1.0",

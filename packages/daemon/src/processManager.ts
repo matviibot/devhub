@@ -3,8 +3,35 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child
 import { promisify } from "node:util";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
-import type { ChildProcess, DetectedExternal, ProcessStatus, ServerSnapshot, ServerState } from "@devhub/shared";
 import { processGroupId, processStartedAt, type DockerInspectState } from "./externalScan.js";
+
+/** Runtime status of one service. Deliberately daemon-local: the wire-facing
+ *  `ServiceStatus` in @devhub/shared is assembled by RepoStore, which merges
+ *  this with what the observer actually saw listening. */
+export type ProcessStatus = "stopped" | "starting" | "running" | "crashed";
+
+export interface DetectedExternal {
+  pid: number;
+  port: number;
+}
+
+/** What ProcessManager knows about a service it is driving. Everything
+ *  observation-derived (real listening ports, ownership, mode) is merged in
+ *  by RepoStore — this is only "what devhub itself did". */
+export interface RuntimeSnapshot {
+  id: string;
+  status: ProcessStatus;
+  pid: number | null;
+  /** Sniffed from the process's own output; ground truth still comes from
+   *  the socket scan, this just fills the gap before the next tick. */
+  port: number | null;
+  startedAt: number | null;
+  exitCode: number | null;
+  restartCount: number;
+  /** Running, but adopted rather than spawned — no captured output until
+   *  it is restarted through devhub. */
+  external: boolean;
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -56,9 +83,18 @@ interface RuntimeServerConfigBase {
 
 export interface ProcessRuntimeConfig extends RuntimeServerConfigBase {
   kind: "process";
+  /** Empty for an observed-only service: devhub found it running but has no
+   *  launcher for it, so it can be stopped but never started. */
   command: string;
   /** Already-resolved absolute working directory. */
   cwd: string;
+  /** Set for every worktree's copy of a `fixed`-policy role, so starting one
+   *  stops the others first. Derived per-repo by RepoStore, never hand-set. */
+  singletonGroup?: string;
+  /** Extra env for the spawned shell — carries an `alloc` policy's assigned
+   *  port, e.g. `{ PORT: "3117" }`. */
+  env?: Record<string, string>;
+  killPatterns?: string[];
 }
 
 export interface DockerRuntimeConfig extends RuntimeServerConfigBase {
@@ -66,13 +102,13 @@ export interface DockerRuntimeConfig extends RuntimeServerConfigBase {
   container: string;
 }
 
-/** A server config flattened out of its parent project. Daemon-internal —
- *  the wire-facing shape is @devhub/shared's ServerSnapshot. */
+/** One service, flattened for the runtime. Daemon-internal — RepoStore
+ *  rebuilds this list from launchers x worktrees on every tick. */
 export type RuntimeServerConfig = ProcessRuntimeConfig | DockerRuntimeConfig;
 
 interface Runtime {
   config: RuntimeServerConfig;
-  state: ServerState;
+  state: RuntimeSnapshot;
   logs: string[];
   lineBuffer: string;
   /** Second, independent line-carry buffer for docker's stderr pipe — a pty
@@ -93,9 +129,12 @@ interface Runtime {
 }
 
 export declare interface ProcessManager {
-  on(event: "update", listener: (snapshot: ServerSnapshot) => void): this;
-  on(event: "removed", listener: (id: string) => void): this;
+  on(event: "update", listener: (id: string) => void): this;
   on(event: "log", listener: (id: string, lines: string[]) => void): this;
+  /** Deliberately not called "error": EventEmitter throws on an emitted
+   *  "error" with no listener, which would turn a failed `docker start` into
+   *  a dead daemon. */
+  on(event: "actionFailed", listener: (message: string) => void): this;
 }
 
 export class ProcessManager extends EventEmitter {
@@ -118,7 +157,6 @@ export class ProcessManager extends EventEmitter {
         exitCode: null,
         restartCount: 0,
         external: false,
-        children: [],
       },
       logs: [],
       lineBuffer: "",
@@ -132,13 +170,23 @@ export class ProcessManager extends EventEmitter {
     };
   }
 
-  snapshot(id: string): ServerSnapshot | null {
-    const rt = this.runtimes.get(id);
-    return rt ? ({ ...rt.config, state: rt.state, detected: rt.detected } as ServerSnapshot) : null;
+  snapshot(id: string): RuntimeSnapshot | null {
+    return this.runtimes.get(id)?.state ?? null;
   }
 
-  allSnapshots(): ServerSnapshot[] {
-    return [...this.runtimes.values()].map((rt) => ({ ...rt.config, state: rt.state, detected: rt.detected }) as ServerSnapshot);
+  /** Every runtime's state, for RepoStore to merge into the view tree. */
+  states(): Map<string, RuntimeSnapshot> {
+    const out = new Map<string, RuntimeSnapshot>();
+    for (const rt of this.runtimes.values()) out.set(rt.config.id, rt.state);
+    return out;
+  }
+
+  has(id: string): boolean {
+    return this.runtimes.has(id);
+  }
+
+  configFor(id: string): RuntimeServerConfig | null {
+    return this.runtimes.get(id)?.config ?? null;
   }
 
   logBacklog(id: string): string[] {
@@ -154,15 +202,33 @@ export class ProcessManager extends EventEmitter {
     this.emit("log", id, [text]);
   }
 
-  /** Reconciles running state with a freshly reloaded/edited config. */
-  applyConfig(servers: RuntimeServerConfig[]) {
+  /** A failed start/stop/restart, reported to the user rather than only to a
+   *  log buffer nobody has open. Previously every one of these went into the
+   *  service's ring buffer and nowhere else, so the row simply flipped back to
+   *  stopped and the reason was invisible unless the drawer happened to be
+   *  open — which sent you to the terminal to find out why, the thing devhub
+   *  exists to replace. */
+  private failure(id: string, verb: "start" | "stop" | "restart", err: unknown) {
+    const message = (err as Error).message;
+    this.logNote(id, `[devhub] failed to ${verb}: ${message}`);
+    const name = this.runtimes.get(id)?.config.name ?? id;
+    this.emit("actionFailed", `Couldn't ${verb} ${name}: ${message}`);
+  }
+
+  /** Reconciles running state with a freshly rebuilt service list.
+   *
+   *  `stopRemoved` defaults to FALSE and that matters: this list is now
+   *  recomputed from observation every tick, so an id can disappear simply
+   *  because a process exited or a role was re-derived. Killing on removal
+   *  would turn a momentary blip into devhub shooting a live dev server.
+   *  Only an explicit user action (deleting a launcher) passes true. */
+  applyConfig(servers: RuntimeServerConfig[], { stopRemoved = false }: { stopRemoved?: boolean } = {}) {
     const nextIds = new Set(servers.map((s) => s.id));
 
     for (const id of [...this.runtimes.keys()]) {
       if (!nextIds.has(id)) {
-        this.stop(id);
+        if (stopRemoved) this.stop(id);
         this.runtimes.delete(id);
-        this.emit("removed", id);
       }
     }
 
@@ -182,7 +248,12 @@ export class ProcessManager extends EventEmitter {
       }
     }
     this.runtimes = next;
-    for (const config of servers) this.emitUpdate(config.id);
+    // Deliberately emits nothing. This runs on every tick and changes no
+    // runtime state; announcing an "update" per service made each tick
+    // request another rebuild, which called applyConfig again — a self-
+    // sustaining loop that also starved the 5s worktree refresh, because the
+    // interval always arrived while a rebuild was already in flight. The
+    // "update" event is for real transitions (spawn, exit, docker reconcile).
   }
 
   /** Stopped, untracked process-kind servers worth checking against
@@ -266,7 +337,49 @@ export class ProcessManager extends EventEmitter {
     }
   }
 
-  start(id: string) {
+  /** Starting a `singletonGroup` server stops every other running server in
+   *  that group first (fully — including its `killPatterns`) and waits for
+   *  them to actually exit before spawning, so two mutually-exclusive
+   *  instances (e.g. two worktrees of an app that can only bind one fixed
+   *  dev-server port system-wide) never race for the same port. */
+  async start(id: string) {
+    const rt = this.runtimes.get(id);
+    if (!rt) return;
+    if (rt.config.kind === "process" && rt.config.singletonGroup) {
+      await this.stopOtherSingletons(rt.config.singletonGroup, id);
+    }
+    this.startNow(id);
+  }
+
+  private async stopOtherSingletons(group: string, exceptId: string) {
+    const others = [...this.runtimes.values()].filter(
+      (r) => r.config.id !== exceptId && r.config.kind === "process" && r.config.singletonGroup === group && r.state.status !== "stopped",
+    );
+    await Promise.all(others.map((r) => this.fullyStop(r.config.id)));
+  }
+
+  /** Stops a server and waits for it to actually finish exiting — unlike
+   *  the public `stop()`, which fires the kill and returns immediately.
+   *  Used by singleton-group preemption, where the next server must not
+   *  start spawning until the one it's replacing has fully released
+   *  whatever they both contend for (typically a fixed port). */
+  private async fullyStop(id: string): Promise<void> {
+    const rt = this.runtimes.get(id);
+    if (!rt) return;
+    if (rt.config.kind === "docker") {
+      await this.stopDocker(rt, rt.config.container);
+      return;
+    }
+    if (rt.pty) {
+      const exited = new Promise<void>((resolve) => this.once(`exited:${id}`, () => resolve()));
+      this.stop(id);
+      await exited;
+      return;
+    }
+    if (rt.externalPid) await this.stopExternal(rt);
+  }
+
+  private startNow(id: string) {
     const rt = this.runtimes.get(id);
     if (!rt) return;
     if (rt.config.kind === "docker") {
@@ -274,13 +387,16 @@ export class ProcessManager extends EventEmitter {
       return;
     }
     if (rt.pty || rt.externalPid) return;
+    if (!rt.config.command.trim()) {
+      this.logNote(id, "[devhub] nothing to start — devhub observed this service but has no launcher for it. Save one to take control.");
+      return;
+    }
 
     rt.explicitStop = false;
     rt.state.status = "starting";
     rt.state.exitCode = null;
     rt.state.port = rt.config.port ?? null;
     rt.state.external = false;
-    rt.state.children = [];
     rt.logs = [];
     rt.lineBuffer = "";
     this.emitUpdate(id);
@@ -293,12 +409,14 @@ export class ProcessManager extends EventEmitter {
         cols: 120,
         rows: 30,
         cwd: rt.config.cwd,
-        env: process.env as Record<string, string>,
+        // An `alloc` policy's assigned port arrives here as e.g. PORT=3117,
+        // which is the whole mechanism that stops sibling worktrees from
+        // fighting over one hardcoded port.
+        env: { ...(process.env as Record<string, string>), ...(rt.config.env ?? {}) },
       });
     } catch (err) {
       rt.state.status = "crashed";
-      rt.logs.push(`[devhub] failed to start: ${(err as Error).message}`);
-      this.emit("log", id, [rt.logs[rt.logs.length - 1]]);
+      this.failure(id, "start", err);
       this.emitUpdate(id);
       return;
     }
@@ -328,7 +446,7 @@ export class ProcessManager extends EventEmitter {
       return;
     }
     if (rt.externalPid) {
-      this.stopExternal(rt).catch((err) => this.logNote(id, `[devhub] failed to stop: ${(err as Error).message}`));
+      this.stopExternal(rt).catch((err) => this.failure(id, "stop", err));
     }
   }
 
@@ -348,47 +466,18 @@ export class ProcessManager extends EventEmitter {
     if (rt.externalPid) {
       this.stopExternal(rt)
         .then(() => this.start(id))
-        .catch((err) => this.logNote(id, `[devhub] failed to restart: ${(err as Error).message}`));
+        .catch((err) => this.failure(id, "restart", err));
       return;
     }
     this.start(id);
   }
 
-  startProject(projectId: string) {
-    for (const rt of this.runtimes.values()) if (rt.config.projectId === projectId) this.start(rt.config.id);
+  async startMany(ids: string[]) {
+    for (const id of ids) await this.start(id);
   }
 
-  stopProject(projectId: string) {
-    for (const rt of this.runtimes.values()) if (rt.config.projectId === projectId) this.stop(rt.config.id);
-  }
-
-  /** Running process-kind servers with a real backing pid (devhub-spawned
-   *  pty, or a previously-adopted external pid) — candidates for the
-   *  child-process-tree scan; stopped/docker runtimes have no pid to walk
-   *  descendants from. */
-  runningRootPids(): { id: string; pid: number }[] {
-    const out: { id: string; pid: number }[] = [];
-    for (const rt of this.runtimes.values()) {
-      if (rt.config.kind !== "process") continue;
-      const pid = rt.pty?.pid ?? rt.externalPid;
-      if (pid) out.push({ id: rt.config.id, pid });
-    }
-    return out;
-  }
-
-  /** Called by the periodic scan with each running server's freshly
-   *  detected descendant listening processes (see externalScan.ts's
-   *  findChildServers). */
-  setChildren(childMap: Map<string, ChildProcess[]>) {
-    for (const rt of this.runtimes.values()) {
-      if (rt.config.kind !== "process") continue;
-      const next = childMap.get(rt.config.id) ?? [];
-      const prev = rt.state.children;
-      const changed = prev.length !== next.length || prev.some((c, i) => c.pid !== next[i]?.pid || c.port !== next[i]?.port);
-      if (!changed) continue;
-      rt.state.children = next;
-      this.emitUpdate(rt.config.id);
-    }
+  stopMany(ids: string[]) {
+    for (const id of ids) this.stop(id);
   }
 
   /** All docker-kind runtimes, for the periodic reconcile scan. */
@@ -447,7 +536,7 @@ export class ProcessManager extends EventEmitter {
       await execFileAsync("docker", ["start", container], DOCKER_MUTATE_OPTS);
     } catch (err) {
       rt.state.status = "crashed";
-      this.logNote(id, `[devhub] failed to start: ${(err as Error).message}`);
+      this.failure(id, "start", err);
       this.emitUpdate(id);
       return;
     }
@@ -465,13 +554,14 @@ export class ProcessManager extends EventEmitter {
     try {
       await execFileAsync("docker", ["stop", "--time", "10", container], DOCKER_MUTATE_OPTS);
     } catch (err) {
-      this.logNote(id, `[devhub] failed to stop: ${(err as Error).message}`);
+      this.failure(id, "stop", err);
     }
     this.detachDockerLogFollower(rt);
     rt.state.status = "stopped";
     rt.state.pid = null;
     if (rt.config.port === undefined) rt.state.port = null;
     this.emitUpdate(id);
+    await this.runKillPatterns(rt);
   }
 
   private async restartDocker(rt: Runtime, container: string) {
@@ -483,7 +573,7 @@ export class ProcessManager extends EventEmitter {
       await execFileAsync("docker", ["restart", container], DOCKER_MUTATE_OPTS);
     } catch (err) {
       rt.state.status = "crashed";
-      this.logNote(id, `[devhub] failed to restart: ${(err as Error).message}`);
+      this.failure(id, "restart", err);
       this.emitUpdate(id);
       return;
     }
@@ -591,9 +681,27 @@ export class ProcessManager extends EventEmitter {
     rt.state.pid = null;
     rt.state.status = "stopped";
     rt.state.external = false;
-    rt.state.children = [];
     if (rt.config.port === undefined) rt.state.port = null;
     this.emitUpdate(rt.config.id);
+    void this.runKillPatterns(rt);
+  }
+
+  /** Runs each configured `killPatterns` entry as `pkill -f` once a server
+   *  is fully stopped — catches processes that aren't a pid descendant of
+   *  this server's own spawned command (e.g. a Tauri app's compiled native
+   *  binary, launched by the dev CLI as a sibling process rather than a
+   *  child, so it never opens a socket devhub's own child-tree scan would
+   *  find). Best-effort: `pkill` exits 1 when nothing matched, which is the
+   *  common case, not a failure. */
+  private async runKillPatterns(rt: Runtime) {
+    if (rt.config.kind !== "process" || !rt.config.killPatterns?.length) return;
+    for (const pattern of rt.config.killPatterns) {
+      try {
+        await execFileAsync("pkill", ["-f", pattern]);
+      } catch {
+        // No matching process — expected most of the time.
+      }
+    }
   }
 
   /** Core line-buffer/port-sniff/blank-collapse/emit logic, shared by the
@@ -651,24 +759,32 @@ export class ProcessManager extends EventEmitter {
     rt.state.exitCode = exitCode;
     rt.state.status = rt.explicitStop || exitCode === 0 ? "stopped" : "crashed";
     if (rt.state.status === "stopped" && rt.config.port === undefined) rt.state.port = null;
-    rt.state.children = [];
     this.emitUpdate(id);
     this.emit(`exited:${id}`);
+    // Regardless of whether this was a clean stop or a crash — either way
+    // the logical server isn't running anymore, so any configured sibling
+    // pattern shouldn't be left dangling for a subsequent start to collide
+    // with.
+    void this.runKillPatterns(rt);
   }
 
   private emitUpdate(id: string) {
-    const snap = this.snapshot(id);
-    if (snap) this.emit("update", snap);
+    if (this.runtimes.has(id)) this.emit("update", id);
   }
 
-  /** Called on daemon shutdown — stops pty/adopted-external children (which
-   *  would otherwise orphan), but leaves docker containers running: they're
-   *  meant to outlive any one controlling process (docker-compose, another
-   *  terminal), so devhub only detaches its own local log follower. */
+  /** Called on daemon shutdown. Stops ONLY processes devhub itself spawned —
+   *  those would be orphaned otherwise.
+   *
+   *  It must never touch an adopted process. Devhub now adopts every service
+   *  it observes running, so that they are controllable without anyone
+   *  clicking anything; those processes existed before the daemon started and
+   *  have to outlive it. Killing them here turns "restart devhub" into "lose
+   *  every dev server on the machine". Docker containers are left alone for
+   *  the same reason. */
   shutdown() {
     for (const rt of this.runtimes.values()) {
       if (rt.config.kind === "docker") this.detachDockerLogFollower(rt);
-      else this.stop(rt.config.id);
+      else if (rt.pty) this.stop(rt.config.id);
     }
   }
 }

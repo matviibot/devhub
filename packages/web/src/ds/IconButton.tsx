@@ -5,9 +5,9 @@ import { Tooltip } from "./Tooltip";
 type Size = "sm" | "md" | "lg";
 
 const SIZES: Record<Size, { box: number; icon: number; r: string }> = {
-  sm: { box: 22, icon: 13, r: "var(--radius-xs)" },
-  md: { box: 28, icon: 15, r: "var(--radius-sm)" },
-  lg: { box: 34, icon: 18, r: "var(--radius-md)" },
+  sm: { box: 28, icon: 14, r: "var(--radius-xs)" },
+  md: { box: 32, icon: 16, r: "var(--radius-sm)" },
+  lg: { box: 36, icon: 18, r: "var(--radius-md)" },
 };
 
 interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "size"> {
@@ -42,6 +42,7 @@ export function IconButton({
   return (
     <Tooltip label={label}>
       <button
+        data-ds-icon-button="1"
         type="button"
         aria-label={label}
         aria-pressed={selected || undefined}
@@ -52,8 +53,9 @@ export function IconButton({
           setHover(false);
           setPress(false);
         }}
-        onMouseDown={() => setPress(true)}
-        onMouseUp={() => setPress(false)}
+        onPointerDown={() => setPress(true)}
+        onPointerUp={() => setPress(false)}
+        onPointerCancel={() => setPress(false)}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -67,8 +69,9 @@ export function IconButton({
           color: fg,
           cursor: disabled ? "default" : "pointer",
           opacity: disabled ? 0.38 : 1,
+          transform: press && !disabled ? "translateY(1px)" : "none",
+          touchAction: "manipulation",
           transition: "var(--transition-state)",
-          outline: "none",
           ...style,
         }}
         {...rest}

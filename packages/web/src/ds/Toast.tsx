@@ -41,7 +41,7 @@ export function ToastStack({ toasts, onDismiss }: StackProps) {
         <Toast key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />
       ))}
       {overflow > 0 && (
-        <span style={{ font: "400 11px/1 var(--font-mono)", color: "var(--dh-text-faint)", pointerEvents: "none" }}>
+        <span style={{ font: "var(--type-meta-text)", color: "var(--dh-text-secondary)", pointerEvents: "none" }}>
           +{overflow} more delete{overflow === 1 ? "" : "s"}
         </span>
       )}
@@ -97,15 +97,15 @@ function Toast({ toast, onDismiss }: { toast: ToastData; onDismiss: () => void }
         maxWidth: "min(380px, calc(100vw - 48px))",
         padding: "13px 14px",
         borderRadius: 10,
-        background: "var(--dh-bg-card)",
+        background: "var(--dh-surface-raised)",
         border: "1px solid var(--dh-border-button)",
-        boxShadow: "0 14px 34px rgba(8,7,12,0.55)",
+        boxShadow: "var(--dh-shadow-menu)",
         pointerEvents: "auto",
         animation: "dhrise .18s ease-out both",
       }}
     >
       <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--dh-text-dot)", flex: "0 0 auto" }} />
-      <span style={{ flex: 1, minWidth: 0, font: "400 12px/1 var(--font-mono)", color: "var(--dh-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <span style={{ flex: 1, minWidth: 0, font: "var(--type-body-text)", color: "var(--dh-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {toast.message}
       </span>
       {toast.actionLabel && toast.onAction && (
@@ -122,7 +122,7 @@ function Toast({ toast, onDismiss }: { toast: ToastData; onDismiss: () => void }
             borderRadius: 6,
             background: "transparent",
             color: "var(--dh-link)",
-            font: "400 11px/1 var(--font-mono)",
+            font: "var(--type-control)",
             cursor: "pointer",
           }}
           onMouseEnter={(e) => {
