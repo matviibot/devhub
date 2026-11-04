@@ -36,6 +36,9 @@ export interface Launcher {
    *  Tauri app's native binary, launched by the dev CLI as a sibling). Keep
    *  them as specific as possible — this is a broad match. */
   killPatterns?: string[];
+  /** The page this launcher serves, opened by "Open page". `{port}` becomes
+   *  the worktree's assigned port (or the first observed one). */
+  url?: string;
 }
 
 export interface Repo {
@@ -121,6 +124,8 @@ export interface ServiceView {
   /** Running, but devhub didn't spawn it, so there's no captured output
    *  until it's restarted through devhub. */
   external: boolean;
+  /** The launcher's `url` with `{port}` filled in; absent when none is declared. */
+  url?: string;
 }
 
 export interface WorktreeView {

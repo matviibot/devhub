@@ -404,6 +404,7 @@ export class RepoStore {
                 observedPorts: matchPorts,
                 observedPid: match ? groupPid(match) : null,
                 rt,
+                url: l.url,
               }),
             );
 
@@ -673,6 +674,7 @@ export class RepoStore {
     observedPorts: number[];
     observedPid: number | null;
     rt: RuntimeSnapshot | undefined;
+    url?: string;
   }): ServiceView {
     const observed = a.observedPorts.length > 0 || a.observedPid != null;
     // Observation wins: it is ground truth. The runtime's own port is only a
@@ -703,6 +705,7 @@ export class RepoStore {
       startedAt: a.rt?.startedAt ?? null,
       exitCode: a.rt?.exitCode ?? null,
       external: a.rt?.external ?? (observed && (!a.rt || a.rt.status === "stopped")),
+      ...(a.url ? { url: a.url.replace("{port}", String(a.assignedPort ?? ports[0] ?? "")) } : {}),
     };
   }
 
@@ -819,12 +822,16 @@ export class RepoStore {
     if (!launcher.cmd.trim()) throw new Error("A launcher needs a command");
     const target = replacingRole ?? role;
     const idx = repo.launchers.findIndex((l) => l.role === target);
+    // The launcher dialog has no fields for these, so an edit keeps the stored ones.
+    const killPatterns = launcher.killPatterns ?? repo.launchers[idx]?.killPatterns;
+    const url = launcher.url ?? repo.launchers[idx]?.url;
     const clean: Launcher = {
       role,
       cmd: launcher.cmd.trim(),
       ...(launcher.dir?.trim() ? { dir: launcher.dir.trim().replace(/^\.?\/*/, "").replace(/\/+$/, "") } : {}),
       policy: launcher.policy,
-      ...(launcher.killPatterns?.length ? { killPatterns: launcher.killPatterns } : {}),
+      ...(killPatterns?.length ? { killPatterns } : {}),
+      ...(url ? { url } : {}),
     };
     if (idx === -1) repo.launchers.push(clean);
     else repo.launchers[idx] = clean;

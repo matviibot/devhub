@@ -51,6 +51,7 @@ interface RawLauncher {
   dir?: string;
   policy?: RawPolicy;
   killPatterns?: string[];
+  url?: string;
 }
 interface RawRepo {
   path?: string;
@@ -105,6 +106,7 @@ function parseLauncher(raw: RawLauncher, what: string): Launcher {
     ...(dir ? { dir } : {}),
     policy: parsePolicy(raw.policy, `${what} launcher "${role}"`),
     ...(raw.killPatterns?.length ? { killPatterns: raw.killPatterns } : {}),
+    ...(raw.url?.trim() ? { url: raw.url.trim() } : {}),
   };
 }
 
@@ -261,6 +263,7 @@ export function writeConfig(projects: Project[], path: string = CONFIG_PATH): vo
           ...(l.dir ? { dir: l.dir } : {}),
           policy: policyOut(l.policy),
           ...(l.killPatterns?.length ? { killPatterns: l.killPatterns } : {}),
+          ...(l.url ? { url: l.url } : {}),
         })),
       })),
       ...(p.looseLaunchers?.length
@@ -270,6 +273,8 @@ export function writeConfig(projects: Project[], path: string = CONFIG_PATH): vo
               cmd: l.cmd,
               ...(l.dir ? { dir: l.dir } : {}),
               policy: policyOut(l.policy),
+              ...(l.killPatterns?.length ? { killPatterns: l.killPatterns } : {}),
+              ...(l.url ? { url: l.url } : {}),
             })),
           }
         : {}),

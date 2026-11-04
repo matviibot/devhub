@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import type { AgentRun, ProjectView, ServiceView } from "@devhub/shared";
 import type { Devhub } from "../hooks/useDevhub";
 import { Icon, Overlay } from "../ds";
+import { pageUrl } from "../lib/pageUrl";
 
 interface Props {
   devhub: Devhub;
@@ -40,8 +41,7 @@ function previewOf(project: ProjectView, runs: AgentRun[], announcements: Devhub
   const activeRunIds = new Set(runs.filter((run) => run.projectId === project.id && (run.status === "working" || run.status === "waiting")).map((run) => run.id));
   const announced = announcements.find((item) => item.projectId === project.id && activeRunIds.has(item.runId));
   if (announced?.status === "running") return announced.url;
-  const port = servicesOf(project).find((service) => service.status === "running" && service.ports.length > 0)?.ports[0];
-  return port ? `http://localhost:${port}` : null;
+  return pageUrl(servicesOf(project)) ?? null;
 }
 
 export function CommandPalette({

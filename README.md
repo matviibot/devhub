@@ -105,6 +105,9 @@ The durable schema is deliberately small:
 Use `fixed` when a service hardcodes its ports and only one worktree may run
 it. Use `alloc` when the command accepts a port through an environment
 variable. `icon` may be absolute, `~/...`, or relative to the first repo.
+A launcher's optional `url` is the page "Open page" opens (`{port}` becomes
+the assigned port). When a project declares one, only a running declared page
+is offered; otherwise devhub opens the first port of a launched process.
 The Projects hub starts launchers from each repo's primary checkout and stops
 all observed runtimes belonging to the project. See
 [`docs/design-observation-first.md`](docs/design-observation-first.md)
