@@ -4,6 +4,7 @@ import { Button, EmptyState, Icon, IconButton, MenuButton, StatusDot, ToastStack
 import type { Devhub } from "../hooks/useDevhub";
 import { dur } from "../lib/format";
 import { tildify } from "../lib/paths";
+import { pageUrl } from "../lib/pageUrl";
 import { CommandPalette } from "./CommandPalette";
 
 const RAIL_W = 268;
@@ -599,9 +600,8 @@ function ProjectTile({
   const blocker = currentRun ? blockedCheck(currentRun) : undefined;
   const focus = (currentRun ? groups.find((group) => runTouchesWorkspace(currentRun, group)) : undefined) ?? groups.find((group) => group.liveCount > 0) ?? groups[0];
   const liveServices = focus?.services.filter((service) => service.status === "running" || service.status === "starting") ?? [];
-  const previewPort = liveServices.flatMap((service) => service.ports)[0];
   const announced = (currentRun ? serviceAnnouncements.filter((item) => item.runId === currentRun.id) : serviceAnnouncements)[0];
-  const previewUrl = serviceAnnouncements.find((item) => item.status === "running")?.url ?? (previewPort ? `http://localhost:${previewPort}` : undefined);
+  const previewUrl = serviceAnnouncements.find((item) => item.status === "running")?.url ?? pageUrl(focus?.services ?? []);
   const problemCount = project.alertCount + neverStarted;
   const services = allServices(project);
   const primaryLaunchers = project.repos.flatMap((repo) =>
@@ -840,7 +840,6 @@ function LaunchProject({
   const selected = groups.find((group) => group.id === selectedId) ?? groups[0];
   const running = selected?.services.filter((service) => service.status === "running" || service.status === "starting") ?? [];
   const startable = selected?.services.filter((service) => service.launchable && service.status !== "running") ?? [];
-  const previewPort = running.flatMap((service) => service.ports)[0];
   const allMemberIds = selected?.services.map((service) => service.id) ?? [];
   const busy = allMemberIds.some((id) => devhub.pending.has(id));
   const workspaceRuns = selected ? agentRuns.filter((run) => runTouchesWorkspace(run, selected)) : [];
@@ -848,7 +847,7 @@ function LaunchProject({
   const announcedServices = serviceAnnouncements.filter((item) => workspaceRunIds.has(item.runId));
   const reservedPorts = portReservations.filter((item) => workspaceRunIds.has(item.runId));
   const announcedPreview = announcedServices.find((item) => item.status === "running");
-  const previewUrl = announcedPreview?.url ?? (previewPort ? `http://localhost:${previewPort}` : undefined);
+  const previewUrl = announcedPreview?.url ?? pageUrl(selected?.services ?? []);
   const currentRun = focusedRun(workspaceRuns);
   const currentBlocker = currentRun ? blockedCheck(currentRun) : undefined;
   const observedPorts = [...new Set(running.flatMap((service) => service.ports))].sort((a, b) => a - b);
