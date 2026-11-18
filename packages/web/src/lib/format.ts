@@ -9,6 +9,7 @@ export function dur(ms: number | null): string {
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
+  if (h >= 48) return `${Math.floor(h / 24)}d ${h % 24}h`;
   if (h) return `${h}h ${m % 60}m`;
   if (m) return `${m}m ${s % 60}s`;
   return `${s}s`;

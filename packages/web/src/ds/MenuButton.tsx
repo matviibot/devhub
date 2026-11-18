@@ -24,7 +24,7 @@ type Size = "sm" | "md";
 
 const TRIGGER_SIZES: Record<Size, { box: number; icon: number }> = {
   sm: { box: 24, icon: 14 },
-  md: { box: 30, icon: 16 },
+  md: { box: 32, icon: 16 },
 };
 
 interface Props {

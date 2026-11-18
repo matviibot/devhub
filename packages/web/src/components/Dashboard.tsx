@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import type { ActivityEvent, AgentRun, Alert, NeverStarted, Orphan, PortReservation, PortRow, ProjectView, RepoView, ServiceAnnouncement, ServiceView, WorktreeView } from "@devhub/shared";
 import { Button, EmptyState, Icon, IconButton, MenuButton, StatusDot, ToastStack, type MenuButtonItem, type ToastData } from "../ds";
 import type { Devhub } from "../hooks/useDevhub";
-import { dur, gitSummary, usage } from "../lib/format";
+import { bytes, dur, gitSummary, usage } from "../lib/format";
 import { tildify } from "../lib/paths";
 import { pageUrl } from "../lib/pageUrl";
 import { CommandPalette } from "./CommandPalette";
@@ -101,7 +101,10 @@ export function Dashboard({
       <LaunchHeader
         view={view}
         project={selected}
-        projectCount={projects.length}
+        load={projects.reduce(
+          (sum, p) => ({ running: sum.running + Number(p.runningCount > 0), cpu: sum.cpu + (p.stats?.cpu ?? 0), rssBytes: sum.rssBytes + (p.stats?.rssBytes ?? 0) }),
+          { running: 0, cpu: 0, rssBytes: 0 },
+        )}
         activeCount={projects.filter((p) => p.runningCount > 0 || agentRuns.some((run) => run.projectId === p.id && (run.status === "working" || run.status === "waiting"))).length}
         attentionCount={alerts.length + unowned.length + neverStarted.length + blockedRuns.length}
         filter={filter}
@@ -299,7 +302,7 @@ function runTouchesWorkspace(run: AgentRun, workspace: WorkspaceSummary): boolea
 function LaunchHeader({
   view,
   project,
-  projectCount,
+  load,
   activeCount,
   attentionCount,
   filter,
@@ -315,7 +318,7 @@ function LaunchHeader({
 }: {
   view: DashboardView;
   project?: ProjectView;
-  projectCount: number;
+  load: { running: number; cpu: number; rssBytes: number };
   activeCount: number;
   attentionCount: number;
   filter: string;
@@ -386,30 +389,33 @@ function LaunchHeader({
       )}
 
       <nav className="launch-nav" aria-label="DevHub views">
-        {!compact && (
-          <>
-            <a className={atHome ? "is-current" : ""} {...linkProps({ kind: "home" }, onHome)}>Now <span>{projectCount}</span></a>
-            <a className={view.kind === "active" ? "is-current" : ""} {...linkProps({ kind: "active" }, onActive)}>Running <span>{activeCount}</span></a>
-            <a className={view.kind === "attention" ? "is-current attention" : attentionCount ? "attention" : ""} {...linkProps({ kind: "attention" }, onAttention)}>
-              Attention {attentionCount > 0 && <span>{attentionCount}</span>}
-            </a>
-          </>
+        <a
+          className={`launch-load${view.kind === "active" ? " is-current" : ""}`}
+          {...linkProps({ kind: "active" }, onActive)}
+          title="Projects running, and the CPU and memory of everything they run"
+        >
+          <i className={load.running ? "is-live" : ""} />
+          <span data-tabular>{load.running} running</span>
+          {load.running > 0 && !compact && <span data-tabular>{Math.round(load.cpu)}% CPU · {bytes(load.rssBytes)}</span>}
+        </a>
+        {attentionCount > 0 && (
+          <a className={`launch-attention${view.kind === "attention" ? " is-current" : ""}`} {...linkProps({ kind: "attention" }, onAttention)}>
+            <Icon name="error" size={15} />
+            {compact ? attentionCount : `${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`}
+          </a>
         )}
-        <button type="button" className="launch-command" onClick={onCommand} aria-label={`Open commands, ${shortcutLabel}`}>
-          <Icon name="search" size={15} /><span>Commands</span><kbd>{shortcutLabel}</kbd>
-        </button>
+        {compact ? <IconButton icon="add" label="Add project" onClick={onAddProject} /> : <Button variant="secondary" size="sm" icon="add" onClick={onAddProject}>Add project</Button>}
         <MenuButton
-          label="DevHub actions"
+          label="DevHub views"
           icon="more_horiz"
           size="md"
           compact={compact}
           items={[
-            { key: "projects", label: `Now · ${projectCount}`, icon: "view_list", onSelect: onHome },
-            { key: "active", label: `Running · ${activeCount}`, icon: "bolt", onSelect: onActive },
-            { key: "attention", label: `Attention · ${attentionCount}`, icon: "error", onSelect: onAttention },
-            { key: "ports", label: "Ports", icon: "lan", divider: true, onSelect: onPorts },
+            { key: "active", label: "Running", icon: "bolt", onSelect: onActive },
+            { key: "attention", label: "Attention", icon: "error", onSelect: onAttention },
+            { key: "ports", label: "Ports", icon: "lan", onSelect: onPorts },
             { key: "unowned", label: "Not in a project", icon: "folder_off", onSelect: onUnowned },
-            { key: "add", label: "Add project", icon: "add", divider: true, onSelect: onAddProject },
+            { key: "commands", label: `Commands  ${shortcutLabel}`, icon: "search", divider: true, onSelect: onCommand },
           ]}
         />
       </nav>
@@ -501,19 +507,12 @@ function ProjectsHome({
 
   return (
     <div className="projects-home" data-dh-pane="1">
-      <div className="projects-intro">
-        <div>
-          <h1>Now</h1>
-          <p>Start work, open a running page, or see what needs your decision.</p>
-        </div>
-        <Button variant="secondary" icon="add" onClick={onAddProject}>Add project</Button>
-      </div>
-
       {projects.length > 0 ? (
         <div className="project-ledger">
           {query.trim() ? (
             <section className="project-ledger-section">
               <div className="ledger-heading"><h2>Search results</h2><span>{projects.length}</span></div>
+              <ProjectColumns />
               <div className="project-rows">{projects.map(row)}</div>
             </section>
           ) : (
@@ -521,11 +520,12 @@ function ProjectsHome({
               {needsYou.length > 0 && (
                 <section className="project-ledger-section is-attention">
                   <div className="ledger-heading"><h2>Needs you</h2><span>{needsYou.length}</span></div>
+                  <ProjectColumns />
                   <div className="project-rows">{needsYou.map(row)}</div>
                 </section>
               )}
               <section className="project-ledger-section">
-                <div className="ledger-heading"><h2>{needsYou.length ? "Running and ready" : "Projects"}</h2><span>{remaining.length}</span></div>
+                {needsYou.length > 0 ? <div className="ledger-heading"><h2>Everything else</h2><span>{remaining.length}</span></div> : <ProjectColumns />}
                 <div className="project-rows">{remaining.map(row)}</div>
               </section>
               {recentActivity.length > 0 && (
@@ -537,7 +537,7 @@ function ProjectsHome({
                       return (
                         <button type="button" key={event.id} onClick={() => onOpen(event.projectId)}>
                           <span className={`activity-kind is-${event.kind}`}><Icon name={activityIcon(event.kind)} size={15} /></span>
-                          <span><strong>{event.message}</strong><small>{project?.name ?? event.projectId}{event.workspacePath ? ` · ${tildify(event.workspacePath)}` : ""}</small></span>
+                          <strong>{event.message}</strong><small>{project?.name ?? event.projectId}</small>
                           <time dateTime={new Date(event.observedAt).toISOString()}>{dur(Math.max(0, now - event.observedAt))} ago</time>
                         </button>
                       );
@@ -597,40 +597,51 @@ function ProjectTile({
   const blocker = currentRun ? blockedCheck(currentRun) : undefined;
   const focus = (currentRun ? groups.find((group) => runTouchesWorkspace(currentRun, group)) : undefined) ?? groups.find((group) => group.liveCount > 0) ?? groups[0];
   const liveServices = focus?.services.filter((service) => service.status === "running" || service.status === "starting") ?? [];
-  const announced = (currentRun ? serviceAnnouncements.filter((item) => item.runId === currentRun.id) : serviceAnnouncements)[0];
   const previewUrl = serviceAnnouncements.find((item) => item.status === "running")?.url ?? pageUrl(focus?.services ?? []);
   const problemCount = project.alertCount + neverStarted;
   const services = allServices(project);
+  const live = services.filter((service) => service.status === "running" || service.status === "starting");
+  const restartable = live.filter((service) => service.launchable);
   const primaryLaunchers = project.repos.flatMap((repo) =>
     repo.worktrees.filter((worktree) => worktree.isMain).slice(0, 1).flatMap((worktree) => worktree.services.filter((service) => service.launchable)),
   ).concat(project.looseServices.filter((service) => service.launchable));
+  const memberIds = services.map((service) => service.id);
   const projectBusy = devhub.pending.has(`project:${project.id}`) || services.some((service) => devhub.pending.has(service.id));
   const state = blocker || currentRun?.status === "waiting" || problemCount > 0 ? "attention" : currentRun?.status === "working" || project.runningCount > 0 ? "live" : "ready";
-  const summary =
-    blocker
-      ? `${blocker.label}: ${blocker.detail || "Blocked"}`
-      : currentRun?.task
+
+  // What it is doing: an agent's task beats the list of running services.
+  const doing = blocker
+    ? `${blocker.label}: ${blocker.detail || "Blocked"}`
+    : currentRun?.task
       ? currentRun.task
-      : state === "attention"
-      ? `${problemCount} item${problemCount === 1 ? "" : "s"} need a look`
       : liveServices.length > 0
         ? `${liveServices.slice(0, 3).map((service) => service.displayName).join(", ")}${liveServices.length > 3 ? ` +${liveServices.length - 3}` : ""}`
         : groups.length > 0
-          ? `${groups.length} workspace${groups.length === 1 ? "" : "s"} ready`
-          : "Waiting for a workspace";
-  const lastUpdate = currentRun?.updatedAt ?? activity[0]?.observedAt;
-  const activityLabel = lastUpdate ? `Updated ${dur(Math.max(0, now - lastUpdate))} ago` : project.runningCount > 0 ? "Observed running now" : "Ready to start";
+          ? `${groups.length} workspace${groups.length === 1 ? "" : "s"}`
+          : "No workspace yet";
+  const oldestStart = Math.min(...live.map((service) => service.startedAt ?? Infinity));
+  const lastSeen = currentRun?.updatedAt ?? activity[0]?.observedAt;
+  const since = currentRun
+    ? `${currentRun.agent} · ${currentRun.status} ${dur(now - currentRun.startedAt)}`
+    : state === "attention"
+      ? `${problemCount} item${problemCount === 1 ? "" : "s"} need a look`
+      : Number.isFinite(oldestStart)
+        ? `up ${dur(now - oldestStart)}`
+        : lastSeen
+          ? `last active ${dur(Math.max(0, now - lastSeen))} ago`
+          : "no recent activity";
   const statusLabel = blocker
     ? "Blocked"
     : currentRun?.status === "waiting"
       ? "Waiting for you"
       : currentRun?.status === "working"
         ? "Agent working"
-        : state === "live"
-          ? "Running"
-          : state === "attention"
-            ? "Needs attention"
+        : state === "attention"
+          ? "Needs attention"
+          : state === "live"
+            ? "Running"
             : "Stopped";
+  const git = gitSummary(focus?.entries[0]?.worktree.git);
 
   return (
     <article className={`project-row is-${state}`}>
@@ -638,50 +649,68 @@ function ProjectTile({
         <ProjectMark project={project} small />
         <span className="project-row-identity">
           <strong>{project.name}</strong>
-          <span><code>{focus?.label ?? "No workspace"}</code>{activityLabel}</span>
+          <span><code>{focus?.label ?? "—"}</code>{git && <span title="Uncommitted files · commits ahead/behind upstream">{git}</span>}</span>
         </span>
         <span className="project-row-context">
-          <strong>{summary}</strong>
-          <span>
-            {currentRun ? `Declared by ${currentRun.agent}` : announced ? `${announced.role} declared` : "No active agent declaration"}
-            <b aria-hidden="true">/</b>
-            {project.runningCount > 0 ? `${project.runningCount} observed running` : "No runtime observed"}
-            {project.stats && <><b aria-hidden="true">/</b><span data-tabular>{usage(project.stats)}</span></>}
-          </span>
+          <strong title={doing}>{doing}</strong>
+          <span>{since}</span>
         </span>
+        <span className="project-row-num" data-tabular>{project.stats ? `${Math.round(project.stats.cpu)}%` : "—"}</span>
+        <span className="project-row-num" data-tabular>{project.stats ? bytes(project.stats.rssBytes) : "—"}</span>
         <span className={`project-row-state is-${state}`}><i />{statusLabel}</span>
       </a>
 
       <div className="project-row-actions" aria-label={`Actions for ${project.name}`}>
-        {previewUrl && <a className="project-row-action" href={previewUrl} target="_blank" rel="noreferrer"><Icon name="open_in_new" size={15} />Open page</a>}
-        {liveServices[0] && <button type="button" className="project-row-action" onClick={() => onOpenLogs(liveServices[0].id)}><Icon name="terminal" size={15} />Logs</button>}
-        {services.some((service) => service.launchable && (service.status === "running" || service.status === "starting")) && (
-          <button type="button" className="project-row-action" disabled={projectBusy} onClick={() => devhub.restartProject(project.id, services.map((service) => service.id))}>
-            <Icon name="restart_alt" size={15} />Restart
-          </button>
+        {previewUrl && (
+          <a className="project-row-icon" href={previewUrl} target="_blank" rel="noreferrer" title="Open page" aria-label="Open page">
+            <Icon name="open_in_new" size={16} />
+          </a>
         )}
+        {live[0] && <IconButton icon="terminal" label="Logs" onClick={() => onOpenLogs(liveServices[0]?.id ?? live[0].id)} />}
         {project.runningCount > 0 ? (
-          <button type="button" className="project-row-action project-lifecycle is-stop" disabled={projectBusy} onClick={() => devhub.stopProject(project.id, services.map((service) => service.id))}>
+          <button type="button" className="project-row-action project-lifecycle is-stop" disabled={projectBusy} onClick={() => devhub.stopProject(project.id, memberIds)}>
             <Icon name={projectBusy ? "progress_activity" : "stop"} size={15} />Stop
           </button>
         ) : primaryLaunchers.length > 0 ? (
           <button type="button" className="project-row-action project-lifecycle is-start" disabled={projectBusy} onClick={() => devhub.startProject(project.id, primaryLaunchers.map((service) => service.id))}>
-            <Icon name={projectBusy ? "progress_activity" : "play_arrow"} size={16} />Start
+            <Icon name={projectBusy ? "progress_activity" : "play_arrow"} size={15} />Start
           </button>
         ) : (
-          <button type="button" className="project-row-action" onClick={onOpen}>Set up</button>
+          <button type="button" className="project-row-action project-lifecycle" onClick={onOpen}>Set up</button>
         )}
         <MenuButton
-          label={`Actions for ${project.name}`}
+          label={`More actions for ${project.name}`}
+          size="md"
           compact={compact}
           items={[
-            { key: "open", label: "Open project details", icon: "arrow_forward", onSelect: onOpen },
+            ...(restartable.length > 0 && !projectBusy
+              ? [{ key: "restart", label: `Restart ${restartable.length === 1 ? restartable[0].displayName : `${restartable.length} services`}`, icon: "restart_alt", onSelect: () => devhub.restartProject(project.id, memberIds) }]
+              : []),
+            { key: "open", label: "Open project details", icon: "arrow_forward", divider: restartable.length > 0 && !projectBusy, onSelect: onOpen },
             { key: "folder", label: "Reveal source", icon: "folder_open", divider: true, onSelect: () => devhub.revealPath(project.repos[0]?.absPath ?? "") },
             { key: "settings", label: "Project settings", icon: "settings", onSelect: onEdit },
           ]}
         />
       </div>
     </article>
+  );
+}
+
+/** Column labels for the project table; shares `.project-row`'s grid so every
+ *  section lines up under it. */
+function ProjectColumns() {
+  return (
+    <div className="project-row project-columns" aria-hidden="true">
+      <div className="project-row-main">
+        <span />
+        <span>Project</span>
+        <span>Activity</span>
+        <span className="project-row-num">CPU</span>
+        <span className="project-row-num">Memory</span>
+        <span>Status</span>
+      </div>
+      <div className="project-row-actions" />
+    </div>
   );
 }
 
