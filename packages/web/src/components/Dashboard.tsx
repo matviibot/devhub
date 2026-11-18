@@ -6,6 +6,7 @@ import { dur } from "../lib/format";
 import { tildify } from "../lib/paths";
 import { pageUrl } from "../lib/pageUrl";
 import { CommandPalette } from "./CommandPalette";
+import { linkProps, useView, type DashboardView } from "../lib/route";
 
 const RAIL_W = 268;
 
@@ -13,14 +14,6 @@ const RAIL_W = 268;
  *  the scarce resource on this machine, so they get their own view rather
  *  than being buried in each row. */
 type Selection = { kind: "project"; id: string } | { kind: "ports" } | { kind: "unowned" };
-
-type DashboardView =
-  | { kind: "home" }
-  | { kind: "active" }
-  | { kind: "project"; id: string }
-  | { kind: "attention" }
-  | { kind: "ports" }
-  | { kind: "unowned" };
 
 interface Props {
   devhub: Devhub;
@@ -53,7 +46,7 @@ export function Dashboard({
 }: Props) {
   const { projects, activity, agentRuns, portReservations, serviceAnnouncements, unowned, alerts, ports, migration, neverStarted, connected } = devhub;
   const blockedRuns = agentRuns.filter((run) => (run.status === "working" || run.status === "waiting") && runChecks(run).some((check) => check.status === "blocked"));
-  const [view, setView] = useState<DashboardView>({ kind: "home" });
+  const [view, setView] = useView();
   const [filter, setFilter] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -73,6 +66,10 @@ export function Dashboard({
   }, [projects, agentRuns, filter]);
 
   const selected = view.kind === "project" ? projects.find((p) => p.id === view.id) : undefined;
+  useEffect(() => {
+    const page = view.kind === "project" ? selected?.name : view.kind === "home" ? null : view.kind === "unowned" ? "Not in a project" : view.kind[0].toUpperCase() + view.kind.slice(1);
+    document.title = page ? `${page} · devhub` : "devhub";
+  }, [view, selected?.name]);
 
   /** Every id that should be revealed/flashed after an alert click. */
   const [reveal, setReveal] = useState<string | null>(null);
@@ -357,10 +354,10 @@ function LaunchHeader({
 
   return (
     <header className="launch-header">
-      <button type="button" className="launch-brand" onClick={onHome} aria-label="Now">
+      <a className="launch-brand" {...linkProps({ kind: "home" }, onHome)} aria-label="Now">
         <span className="launch-brand-mark"><Icon name="terminal" size={16} /></span>
         <span>devhub</span>
-      </button>
+      </a>
 
       {view.kind === "project" && project ? (
         <div className="launch-crumb">
@@ -391,11 +388,11 @@ function LaunchHeader({
       <nav className="launch-nav" aria-label="DevHub views">
         {!compact && (
           <>
-            <button type="button" className={atHome ? "is-current" : ""} onClick={onHome}>Now <span>{projectCount}</span></button>
-            <button type="button" className={view.kind === "active" ? "is-current" : ""} onClick={onActive}>Running <span>{activeCount}</span></button>
-            <button type="button" className={view.kind === "attention" ? "is-current attention" : attentionCount ? "attention" : ""} onClick={onAttention}>
+            <a className={atHome ? "is-current" : ""} {...linkProps({ kind: "home" }, onHome)}>Now <span>{projectCount}</span></a>
+            <a className={view.kind === "active" ? "is-current" : ""} {...linkProps({ kind: "active" }, onActive)}>Running <span>{activeCount}</span></a>
+            <a className={view.kind === "attention" ? "is-current attention" : attentionCount ? "attention" : ""} {...linkProps({ kind: "attention" }, onAttention)}>
               Attention {attentionCount > 0 && <span>{attentionCount}</span>}
-            </button>
+            </a>
           </>
         )}
         <button type="button" className="launch-command" onClick={onCommand} aria-label={`Open commands, ${shortcutLabel}`}>
@@ -637,7 +634,7 @@ function ProjectTile({
 
   return (
     <article className={`project-row is-${state}`}>
-      <button type="button" className="project-row-main" onClick={onOpen} aria-label={`Open ${project.name}`}>
+      <a className="project-row-main" {...linkProps({ kind: "project", id: project.id }, onOpen)} aria-label={`Open ${project.name}`}>
         <ProjectMark project={project} small />
         <span className="project-row-identity">
           <strong>{project.name}</strong>
@@ -652,7 +649,7 @@ function ProjectTile({
           </span>
         </span>
         <span className={`project-row-state is-${state}`}><i />{statusLabel}</span>
-      </button>
+      </a>
 
       <div className="project-row-actions" aria-label={`Actions for ${project.name}`}>
         {previewUrl && <a className="project-row-action" href={previewUrl} target="_blank" rel="noreferrer"><Icon name="open_in_new" size={15} />Open page</a>}

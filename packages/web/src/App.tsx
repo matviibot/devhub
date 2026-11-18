@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useDevhub } from "./hooks/useDevhub";
+import { useLogParam } from "./lib/route";
 import { useNow } from "./hooks/useNow";
 import { useBreakpoint } from "./hooks/useBreakpoint";
 import { Dashboard } from "./components/Dashboard";
@@ -9,7 +10,7 @@ import { ScrimHost, type ToastData } from "./ds";
 
 export function App() {
   const devhub = useDevhub();
-  const [openLogId, setOpenLogId] = useState<string | null>(null);
+  const [openLogId, setOpenLogId] = useLogParam();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [toasts, setToasts] = useState<ToastData[]>([]);
   const tickingNow = useNow();
