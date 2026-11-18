@@ -28,15 +28,17 @@ async function sampleProcesses(): Promise<Map<number, Proc>> {
   return procs;
 }
 
-/** The root pid and all its descendants. The listener alone undercounts:
- *  `npm run dev` does its work in node/esbuild children. */
-function subtree(root: number, children: Map<number, number[]>): number[] {
+/** The root pid and all its descendants, stopping at another service's root.
+ *  The listener alone undercounts (`npm run dev` works in node/esbuild
+ *  children); without the stop, the devhub daemon would claim every service
+ *  it launched. */
+export function subtree(root: number, children: Map<number, number[]>, otherRoots: Set<number>): number[] {
   const out: number[] = [];
   const stack = [root];
   while (stack.length) {
     const pid = stack.pop()!;
     out.push(pid);
-    stack.push(...(children.get(pid) ?? []));
+    for (const child of children.get(pid) ?? []) if (!otherRoots.has(child)) stack.push(child);
   }
   return out;
 }
@@ -132,12 +134,16 @@ export async function annotateStats(snapshot: Snapshot): Promise<void> {
     return s;
   };
 
+  const live = (s: ServiceView) => s.status === "running" || s.status === "starting";
+  const allServices = snapshot.projects.flatMap((p) => [...p.repos.flatMap((r) => r.worktrees.flatMap((w) => w.services)), ...p.looseServices]);
+  const roots = new Set(allServices.filter((s) => live(s) && s.kind === "process" && s.pid != null).map((s) => s.pid!));
+
   for (const project of snapshot.projects) {
     // A set, so two rows observing the same process tree count it once.
     const projectPids = new Set<number>();
     const projectDocker = new Set<string>();
     const visit = (s: ServiceView) => {
-      if (s.status !== "running" && s.status !== "starting") return;
+      if (!live(s)) return;
       if (s.kind === "docker") {
         const d = s.container ? dockerStats.get(s.container) : undefined;
         if (d && s.container) {
@@ -145,7 +151,7 @@ export async function annotateStats(snapshot: Snapshot): Promise<void> {
           projectDocker.add(s.container);
         }
       } else if (s.pid != null && procs.has(s.pid)) {
-        const pids = subtree(s.pid, children);
+        const pids = subtree(s.pid, children, roots);
         pids.forEach((pid) => projectPids.add(pid));
         s.stats = round(sum(pids));
       }
