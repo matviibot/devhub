@@ -126,6 +126,22 @@ export interface ServiceView {
   external: boolean;
   /** The launcher's `url` with `{port}` filled in; absent when none is declared. */
   url?: string;
+  /** Live usage of the whole process tree (or container); absent when not running. */
+  stats?: ResourceStats;
+}
+
+/** Observed resource usage. `cpu` is percent of one core, so it can exceed 100. */
+export interface ResourceStats {
+  cpu: number;
+  rssBytes: number;
+  procs: number;
+}
+
+/** `git status` of a worktree. `ahead`/`behind` are null without an upstream. */
+export interface GitState {
+  changed: number;
+  ahead: number | null;
+  behind: number | null;
 }
 
 export interface WorktreeView {
@@ -135,6 +151,8 @@ export interface WorktreeView {
   head: string;
   isMain: boolean;
   services: ServiceView[];
+  /** Absent until the first background `git status` completes. */
+  git?: GitState;
 }
 
 export interface RepoView {
@@ -161,6 +179,8 @@ export interface ProjectView {
   looseServices: ServiceView[];
   runningCount: number;
   alertCount: number;
+  /** Sum over every running service, each process counted once. */
+  stats?: ResourceStats;
 }
 
 /** A developer agent currently attached to one project workspace.
@@ -323,6 +343,7 @@ export type ClientMessage =
   | { type: "stopWorktree"; worktreePath: string }
   | { type: "startProject"; projectId: string }
   | { type: "stopProject"; projectId: string }
+  | { type: "restartProject"; projectId: string }
   | { type: "subscribeLogs"; id: string }
   | { type: "unsubscribeLogs"; id: string }
   | { type: "killOrphan"; id: string }

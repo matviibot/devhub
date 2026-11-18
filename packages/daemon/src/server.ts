@@ -125,6 +125,13 @@ export function createServer({ pm, store, webDistPath, getSnapshot, requestRebui
             done([...ids, `project:${msg.projectId}`]);
             break;
           }
+          case "restartProject": {
+            const cur = getSnapshot();
+            const ids = cur ? store.serviceIdsForProject(cur, msg.projectId, "restart") : [];
+            ids.forEach((id) => pm.restart(id));
+            done([...ids, `project:${msg.projectId}`]);
+            break;
+          }
           case "subscribeLogs":
             client.subscribed.add(msg.id);
             send(ws, { type: "logBacklog", id: msg.id, lines: pm.logBacklog(msg.id) });

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import type { ActivityEvent, AgentRun, Alert, NeverStarted, Orphan, PortReservation, PortRow, ProjectView, RepoView, ServiceAnnouncement, ServiceView, WorktreeView } from "@devhub/shared";
 import { Button, EmptyState, Icon, IconButton, MenuButton, StatusDot, ToastStack, type MenuButtonItem, type ToastData } from "../ds";
 import type { Devhub } from "../hooks/useDevhub";
-import { dur } from "../lib/format";
+import { dur, gitSummary, usage } from "../lib/format";
 import { tildify } from "../lib/paths";
 import { pageUrl } from "../lib/pageUrl";
 import { CommandPalette } from "./CommandPalette";
@@ -646,6 +646,7 @@ function ProjectTile({
             {currentRun ? `Declared by ${currentRun.agent}` : announced ? `${announced.role} declared` : "No active agent declaration"}
             <b aria-hidden="true">/</b>
             {project.runningCount > 0 ? `${project.runningCount} observed running` : "No runtime observed"}
+            {project.stats && <><b aria-hidden="true">/</b><span data-tabular>{usage(project.stats)}</span></>}
           </span>
         </span>
         <span className={`project-row-state is-${state}`}><i />{statusLabel}</span>
@@ -654,6 +655,11 @@ function ProjectTile({
       <div className="project-row-actions" aria-label={`Actions for ${project.name}`}>
         {previewUrl && <a className="project-row-action" href={previewUrl} target="_blank" rel="noreferrer"><Icon name="open_in_new" size={15} />Open page</a>}
         {liveServices[0] && <button type="button" className="project-row-action" onClick={() => onOpenLogs(liveServices[0].id)}><Icon name="terminal" size={15} />Logs</button>}
+        {services.some((service) => service.launchable && (service.status === "running" || service.status === "starting")) && (
+          <button type="button" className="project-row-action" disabled={projectBusy} onClick={() => devhub.restartProject(project.id, services.map((service) => service.id))}>
+            <Icon name="restart_alt" size={15} />Restart
+          </button>
+        )}
         {project.runningCount > 0 ? (
           <button type="button" className="project-row-action project-lifecycle is-stop" disabled={projectBusy} onClick={() => devhub.stopProject(project.id, services.map((service) => service.id))}>
             <Icon name={projectBusy ? "progress_activity" : "stop"} size={15} />Stop
@@ -1588,7 +1594,7 @@ function ProjectPane({
           </span>
         </div>
         <span data-tabular style={{ font: "var(--type-meta-text)", color: project.runningCount ? "var(--dh-status-running)" : "var(--dh-text-secondary)" }}>
-          {project.runningCount} up
+          {project.runningCount} up{project.stats ? ` · ${usage(project.stats)}` : ""}
         </span>
         <MenuButton
           label={`${project.name} actions`}
@@ -1941,6 +1947,11 @@ function WorktreeGroup({
           )}
         </button>
         <span style={{ font: "var(--type-code)", color: "var(--dh-text-secondary)" }}>{worktree.head}</span>
+        {gitSummary(worktree.git) && (
+          <span data-tabular title="Uncommitted files · commits ahead/behind upstream" style={{ font: "var(--type-meta-text)", color: "var(--dh-text-secondary)" }}>
+            {gitSummary(worktree.git)}
+          </span>
+        )}
         <span style={{ flex: 1, height: 1, background: "var(--dh-border-hairline)" }} />
         <span data-tabular style={{ font: "var(--type-meta-text)", color: live ? "var(--dh-status-running)" : "var(--dh-text-secondary)" }}>
           {live > 0 ? `${live} up` : "Idle"}
@@ -2129,6 +2140,7 @@ function ServiceRow({
             : <span>{metadata}</span>}
           {s.policy?.ports === "alloc" && s.assignedPort != null && <span>reserved :{s.assignedPort}</span>}
           {live && s.startedAt && <span>up {dur(now - s.startedAt)}</span>}
+          {live && s.stats && <span data-tabular title={`${s.stats.procs} process${s.stats.procs === 1 ? "" : "es"}`}>{usage(s.stats)}</span>}
           {s.status === "crashed" && <span className="is-error">exited {s.exitCode ?? "?"}</span>}
         </div>
       </div>

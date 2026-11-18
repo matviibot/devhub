@@ -11,6 +11,7 @@ import { inspectDockerContainer, observeProcesses, scanDockerContainers, scanLis
 import { loadPrefs } from "./prefs.js";
 import { ProcessManager } from "./processManager.js";
 import { RepoStore } from "./repoStore.js";
+import { annotateStats } from "./resourceStats.js";
 import { ResourceRegistry } from "./resourceRegistry.js";
 import { createServer } from "./server.js";
 
@@ -137,6 +138,7 @@ async function rebuild({ worktrees = false }: { worktrees?: boolean } = {}) {
     const sockets = await scanListeningSockets();
     const [procs, containers] = await Promise.all([observeProcesses(sockets), scanDockerContainers()]);
     const built = store.build(procs, containers, sockets, pm.states(), dockerStarted);
+    await annotateStats(built.snapshot);
 
     // Never kills on removal — see ProcessManager.applyConfig. An id can
     // vanish simply because a process exited between two ticks.
