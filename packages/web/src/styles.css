@@ -808,11 +808,13 @@ a:hover {
   background: var(--launch-surface);
 }
 
+/* Fixed tracks, never `auto`: an auto actions column sized itself to each
+   row's buttons and shifted every column left of it, row by row. */
 .project-row {
   min-width: 0;
-  min-height: 74px;
+  min-height: 64px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 200px;
   align-items: stretch;
   border-bottom: 1px solid var(--launch-line);
   background: var(--launch-surface);
@@ -844,9 +846,9 @@ a:hover {
   min-width: 0;
   padding: 13px 16px;
   display: grid;
-  grid-template-columns: 28px minmax(150px, 0.7fr) minmax(220px, 1.3fr) 116px;
+  grid-template-columns: 28px minmax(140px, 1fr) minmax(200px, 1.7fr) 48px 72px 128px;
   align-items: center;
-  gap: 13px;
+  gap: 16px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -881,7 +883,7 @@ a:hover {
 }
 
 .project-row-identity code {
-  margin-right: 8px;
+  margin-right: 10px;
   color: #a6adb7;
   font: var(--type-code);
 }
@@ -898,6 +900,72 @@ a:hover {
   margin: 0 7px;
   color: #505864;
   font-weight: 400;
+}
+
+.project-row-num {
+  color: #c7cbd2;
+  font: var(--type-meta-text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.project-columns,
+.project-columns:hover {
+  min-height: 0;
+  margin-bottom: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.project-columns .project-row-main {
+  padding-block: 0;
+  cursor: default;
+  color: #6f7783;
+  font: var(--type-caption);
+}
+
+.project-columns .project-row-actions {
+  border-left-color: transparent;
+}
+
+.project-row-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: #aeb5c0;
+}
+
+.project-row-icon:hover {
+  background: var(--dh-bg-hover);
+  color: var(--launch-text);
+}
+
+.launch-nav > .launch-load {
+  gap: 8px;
+}
+
+.launch-load > i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dh-status-stopped);
+}
+
+.launch-load > i.is-live {
+  background: var(--dh-status-running);
+}
+
+.launch-load > span + span {
+  margin-left: 0;
+  color: var(--launch-muted);
+}
+
+.launch-nav > .launch-attention {
+  gap: 6px;
+  color: var(--dh-warning-text);
 }
 
 .project-row-state {
@@ -937,8 +1005,12 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 3px;
+  gap: 2px;
   border-left: 1px solid var(--launch-line);
+}
+
+.project-row-actions > * {
+  flex-shrink: 0;
 }
 
 .project-row-action {
@@ -994,10 +1066,10 @@ a:hover {
 
 .activity-list > button {
   width: 100%;
-  min-height: 54px;
-  padding: 9px 4px;
+  min-height: 38px;
+  padding: 6px 4px;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto 96px;
   align-items: center;
   gap: 10px;
   border: 0;
@@ -1013,11 +1085,11 @@ a:hover {
 }
 
 .activity-kind {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
-  border: 1px solid #303641;
+  border: 0;
   border-radius: 7px;
   color: #8fc7ff;
 }
@@ -2599,7 +2671,8 @@ a:hover {
 
 @media (max-width: 1100px) {
   .project-row-main {
-    grid-template-columns: 28px minmax(150px, 0.85fr) minmax(180px, 1.15fr) 104px;
+    grid-template-columns: 28px minmax(120px, 1fr) minmax(160px, 1.4fr) 40px 64px 112px;
+    gap: 12px;
   }
   .project-row-action {
     padding-inline: 7px;
@@ -2680,6 +2753,11 @@ a:hover {
   }
   .project-row-context {
     grid-column: 2 / -1;
+  }
+  .project-row-main > .project-row-num,
+  .project-columns,
+  .launch-load > span + span {
+    display: none;
   }
   .project-row-state {
     grid-column: 3;
