@@ -714,10 +714,20 @@ export class RepoStore {
     byService: Map<string, { ports: number[]; label: string; kind: "process" | "docker"; pid: number | null }>,
     unowned: Orphan[],
   ): PortRow[] {
-    const labelForPort = new Map<number, { serviceId: string; label: string; kind: "process" | "docker" }>();
+    // Keyed by port AND pid: a port-only key stamped one service's label on
+    // every holder of a colliding port. pid null = docker (socket held by the backend).
+    const servicesOnPort = new Map<number, { serviceId: string; label: string; kind: "process" | "docker"; pid: number | null }[]>();
     for (const [id, info] of byService) {
-      for (const port of info.ports) labelForPort.set(port, { serviceId: id, label: info.label, kind: info.kind });
+      for (const port of info.ports) {
+        const list = servicesOnPort.get(port) ?? [];
+        list.push({ serviceId: id, label: info.label, kind: info.kind, pid: info.pid });
+        servicesOnPort.set(port, list);
+      }
     }
+    const serviceFor = (s: ListeningSocket) => {
+      const list = servicesOnPort.get(s.port) ?? [];
+      return list.find((c) => c.pid === s.pid) ?? list.find((c) => c.pid === null);
+    };
     const orphanPorts = new Map<number, string>();
     for (const o of unowned) for (const port of o.ports) orphanPorts.set(port, `${o.label} (orphan)`);
 
@@ -728,7 +738,7 @@ export class RepoStore {
     // which is the only reason dedupe existed in the first place.
     const byPort = new Map<number, PortRow>();
     for (const s of sockets) {
-      const hit = labelForPort.get(s.port);
+      const hit = serviceFor(s);
       const holder: PortHolder = hit
         ? { pid: s.pid, label: hit.label, serviceId: hit.serviceId, kind: hit.kind }
         : { pid: s.pid, label: orphanPorts.get(s.port) ?? s.command, serviceId: null, kind: "foreign" };
