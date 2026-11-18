@@ -258,6 +258,8 @@ export function useDevhub() {
       act([`project:${projectId}`, ...memberIds], { type: "startProject", projectId }),
     stopProject: (projectId: string, memberIds: string[] = []) =>
       act([`project:${projectId}`, ...memberIds], { type: "stopProject", projectId }),
+    restartProject: (projectId: string, memberIds: string[] = []) =>
+      act([`project:${projectId}`, ...memberIds], { type: "restartProject", projectId }),
     killOrphan: (id: string) => act(id, { type: "killOrphan", id }),
     removeContainer: (targetId: string, container: string) => act(targetId, { type: "removeContainer", container }),
 

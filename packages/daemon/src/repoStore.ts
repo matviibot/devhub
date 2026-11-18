@@ -883,9 +883,14 @@ export class RepoStore {
   /** Project start means the primary checkout of every repo, plus loose
    * launchers. Project stop means every service currently attributed to it,
    * including sibling worktrees. */
-  serviceIdsForProject(view: Snapshot, projectId: string, action: "start" | "stop"): string[] {
+  serviceIdsForProject(view: Snapshot, projectId: string, action: "start" | "stop" | "restart"): string[] {
     const project = view.projects.find((candidate) => candidate.id === projectId);
     if (!project) return [];
+    // Restart only what is up and devhub can bring back.
+    if (action === "restart")
+      return [...project.repos.flatMap((repo) => repo.worktrees.flatMap((worktree) => worktree.services)), ...project.looseServices]
+        .filter((service) => isLive(service) && service.launchable)
+        .map((service) => service.id);
     const repoServices = project.repos.flatMap((repo) =>
       (action === "start" ? repo.worktrees.filter((worktree) => worktree.isMain).slice(0, 1) : repo.worktrees)
         .flatMap((worktree) => worktree.services)
