@@ -781,10 +781,6 @@ a:hover {
   text-align: center;
 }
 
-.project-ledger-section.is-attention .ledger-heading h2 {
-  color: var(--dh-warning-text);
-}
-
 .project-rows {
   border: 1px solid var(--launch-line);
   border-radius: 10px;
