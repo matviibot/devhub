@@ -109,6 +109,9 @@ A launcher's optional `url` is the page "Open page" opens (`{port}` becomes
 the assigned port). When a project declares one, only a running declared page
 is offered; otherwise devhub opens the first port of a launched process.
 The Projects hub starts launchers from each repo's primary checkout and stops
-all observed runtimes belonging to the project. See
+all observed runtimes belonging to the project. Launched commands run
+detached under a terminal of their own, writing to `~/.devhub/sessions/`, so
+restarting the daemon never stops them: the next daemon re-attaches and keeps
+their log history. See
 [`docs/design-observation-first.md`](docs/design-observation-first.md)
 for the complete rationale.

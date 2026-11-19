@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -137,6 +137,17 @@ export async function processStartedAt(pid: number): Promise<number | null> {
   try {
     const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "etime="], EXEC_OPTS);
     const ms = parseEtimeMs(stdout);
+    return ms == null ? null : Date.now() - ms;
+  } catch {
+    return null;
+  }
+}
+
+/** Synchronous `processStartedAt`, for the one-off check when re-attaching
+ *  a service the previous daemon started. */
+export function processStartedAtSync(pid: number): number | null {
+  try {
+    const ms = parseEtimeMs(execFileSync("ps", ["-p", String(pid), "-o", "etime="], { ...EXEC_OPTS, encoding: "utf8" }));
     return ms == null ? null : Date.now() - ms;
   } catch {
     return null;
