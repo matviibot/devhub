@@ -476,14 +476,16 @@ function ProjectsHome({
   onEditProject: (id: string) => void;
   onClear: () => void;
 }) {
-  const needsYou = projects.filter((project) => {
+  const needsYou = (project: ProjectView) => {
     const runs = agentRuns.filter((run) => run.projectId === project.id);
     return project.alertCount > 0 || neverStarted.some((item) => item.projectId === project.id) || runs.some((run) => run.status === "waiting" || blockedCheck(run));
-  });
-  const needsYouIds = new Set(needsYou.map((project) => project.id));
-  const remaining = projects
-    .filter((project) => !needsYouIds.has(project.id))
-    .sort((a, b) => b.runningCount - a.runningCount || a.name.localeCompare(b.name));
+  };
+  // Within each section, projects that need you come first.
+  const sorted = [...projects].sort((a, b) => Number(needsYou(b)) - Number(needsYou(a)) || a.name.localeCompare(b.name));
+  const sections = [
+    { title: "Running", items: sorted.filter((project) => project.runningCount > 0) },
+    { title: "Stopped", items: sorted.filter((project) => project.runningCount === 0) },
+  ].filter((section) => section.items.length > 0);
   const projectIds = new Set(projects.map((project) => project.id));
   const recentActivity = activity.filter((event) => projectIds.has(event.projectId));
 
@@ -516,17 +518,13 @@ function ProjectsHome({
             </section>
           ) : (
             <>
-              {needsYou.length > 0 && (
-                <section className="project-ledger-section is-attention">
-                  <div className="ledger-heading"><h2>Needs you</h2><span>{needsYou.length}</span></div>
-                  <ProjectColumns />
-                  <div className="project-rows">{needsYou.map(row)}</div>
+              {sections.map((section, index) => (
+                <section key={section.title} className="project-ledger-section">
+                  <div className="ledger-heading"><h2>{section.title}</h2><span>{section.items.length}</span></div>
+                  {index === 0 && <ProjectColumns />}
+                  <div className="project-rows">{section.items.map(row)}</div>
                 </section>
-              )}
-              <section className="project-ledger-section">
-                {needsYou.length > 0 ? <div className="ledger-heading"><h2>Everything else</h2><span>{remaining.length}</span></div> : <ProjectColumns />}
-                <div className="project-rows">{remaining.map(row)}</div>
-              </section>
+              ))}
               {recentActivity.length > 0 && (
                 <section className="recent-activity" aria-labelledby="recent-activity-heading">
                   <div className="ledger-heading"><h2 id="recent-activity-heading">Recently changed</h2><span>{Math.min(recentActivity.length, 8)}</span></div>
@@ -882,11 +880,13 @@ function LaunchProject({
   const restartable = running.filter((service) => service.launchable);
   const git = gitSummary(selected?.entries[0]?.worktree.git);
 
-  // Same split as the home ledger: crashed services need you, the rest follow running-first.
+  // Same Running / Stopped sections as the home ledger; crashed counts as stopped.
   const rows = selected?.entries.flatMap(({ repo, worktree }) => worktree.services.map((service) => ({ repo, service }))) ?? [];
   const isLive = (service: ServiceView) => service.status === "running" || service.status === "starting";
-  const needsYou = rows.filter(({ service }) => service.status === "crashed");
-  const remaining = rows.filter(({ service }) => service.status !== "crashed").sort((a, b) => Number(isLive(b.service)) - Number(isLive(a.service)));
+  const serviceSections = [
+    { title: "Running", items: rows.filter(({ service }) => isLive(service)) },
+    { title: "Stopped", items: rows.filter(({ service }) => !isLive(service)) },
+  ].filter((section) => section.items.length > 0);
   const serviceRow = ({ repo, service }: (typeof rows)[number]) => (
     <ServiceRow
       key={service.id}
@@ -1048,21 +1048,13 @@ function LaunchProject({
 
           {selected.services.length > 0 ? (
             <div className="project-ledger">
-              {needsYou.length > 0 && (
-                <section className="project-ledger-section is-attention">
-                  <div className="ledger-heading"><h2>Needs you</h2><span>{needsYou.length}</span></div>
-                  <ServiceColumns />
-                  <div className="project-rows">{needsYou.map(serviceRow)}</div>
+              {serviceSections.map((section, index) => (
+                <section key={section.title} className="project-ledger-section">
+                  <div className="ledger-heading"><h2>{section.title}</h2><span>{section.items.length}</span></div>
+                  {index === 0 && <ServiceColumns />}
+                  <div className="project-rows">{section.items.map(serviceRow)}</div>
                 </section>
-              )}
-              <section className="project-ledger-section">
-                <div className="ledger-heading">
-                  <h2>{needsYou.length > 0 ? "Everything else" : "Services"}</h2>
-                  <span>{running.length ? `${running.length} of ${remaining.length} running` : remaining.length}</span>
-                </div>
-                {needsYou.length === 0 && <ServiceColumns />}
-                <div className="project-rows">{remaining.map(serviceRow)}</div>
-              </section>
+              ))}
             </div>
           ) : (
             <section className="focus-section">
