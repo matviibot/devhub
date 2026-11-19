@@ -1,9 +1,13 @@
 import { EventEmitter } from "node:events";
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, truncateSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
-import * as pty from "node-pty";
-import type { IPty } from "node-pty";
-import { processGroupId, processStartedAt, type DockerInspectState } from "./externalScan.js";
+import { processGroupId, processStartedAt, processStartedAtSync, type DockerInspectState } from "./externalScan.js";
+import type { LogLine } from "@devhub/shared";
 
 /** Runtime status of one service. Deliberately daemon-local: the wire-facing
  *  `ServiceStatus` in @devhub/shared is assembled by RepoStore, which merges
@@ -36,6 +40,43 @@ export interface RuntimeSnapshot {
 const execFileAsync = promisify(execFile);
 
 const LOG_BUFFER_LINES = 2000;
+/** Spawned services write here, so they and their output outlive the daemon. */
+const SESSION_DIR = process.env.DEVHUB_SESSIONS ?? join(homedir(), ".devhub", "sessions");
+const LOG_FILE_MAX_BYTES = 8 * 1024 * 1024;
+const SESSION_POLL_MS = 1000;
+const sessionPath = (id: string, ext: "log" | "json" | "exit") =>
+  join(SESSION_DIR, `${createHash("sha1").update(id).digest("hex").slice(0, 16)}.${ext}`);
+
+// Runs the launcher detached from the daemon: `script` gives it a real
+// terminal (colors, interactive CLIs), fed by an idle pipe so its stdin never
+// hits EOF, which `script` would forward as ^D. (A FIFO won't do: macOS FIFOs
+// are sockets, and `script` refuses one.)
+// shortcut: BSD `script` argument order (macOS only); Linux needs `script -qfc`.
+const WRAPPER = `sleep 2147483647 | {
+  script -q -F /dev/null "\${SHELL:-/bin/zsh}" -lc 'stty cols 120 rows 30 2>/dev/null; eval "$DEVHUB_SVC_CMD"'
+  code=$?
+  echo $code > "$DEVHUB_SVC_EXIT"
+  pkill -P $$ sleep
+  exit $code
+}`;
+
+/** A spawned service's wrapper process and how far its log file has been read. */
+interface Session {
+  pid: number;
+  startedAt: number;
+  offset: number;
+  decoder: StringDecoder;
+  watcher: FSWatcher | null;
+}
+
+/** What a session leaves on disk for the next daemon to re-attach to. */
+interface SavedSession {
+  pid: number;
+  startedAt: number;
+  offset: number;
+  lines?: LogLine[];
+  partial?: string;
+}
 const KILL_GRACE_MS = 5000;
 // ps -o etime= has 1s resolution and our own polling adds jitter — allow
 // some slack before concluding a pid's start time no longer matches (i.e.
@@ -58,15 +99,17 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
 // cursor-position/erase codes (e.g. "\x1b[1G\x1b[0K"), which split() turns
 // into dozens of "blank" lines that a real terminal would have erased.
 const ANY_ESCAPE_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+// `docker logs -t` prefixes each line with an RFC 3339 time.
+const DOCKER_TS_RE = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)) /;
 const isVisuallyBlank = (line: string) => line.replace(ANY_ESCAPE_RE, "").trim() === "";
 
 /** Collapses runs of visually-blank lines to at most one, preserving
  *  intentional single-blank-line spacing while dropping spinner noise. */
-function collapseBlankRuns(newLines: string[], lastStored: string | undefined): string[] {
-  const out: string[] = [];
-  let prevBlank = lastStored !== undefined && isVisuallyBlank(lastStored);
+function collapseBlankRuns(newLines: LogLine[], lastStored: LogLine | undefined): LogLine[] {
+  const out: LogLine[] = [];
+  let prevBlank = lastStored !== undefined && isVisuallyBlank(lastStored.text);
   for (const line of newLines) {
-    const blank = isVisuallyBlank(line);
+    const blank = isVisuallyBlank(line.text);
     if (blank && prevBlank) continue;
     out.push(line);
     prevBlank = blank;
@@ -109,15 +152,15 @@ export type RuntimeServerConfig = ProcessRuntimeConfig | DockerRuntimeConfig;
 interface Runtime {
   config: RuntimeServerConfig;
   state: RuntimeSnapshot;
-  logs: string[];
+  logs: LogLine[];
   lineBuffer: string;
   /** Second, independent line-carry buffer for docker's stderr pipe — a pty
    *  merges stdout/stderr itself, but `docker logs -f` gives two pipes that
    *  can interleave mid-line if fed into a single shared buffer. */
   stderrBuffer: string;
-  pty: IPty | null;
-  /** Set instead of `pty` when "running" backs onto an adopted foreign
-   *  process — there's no pty handle, just a pid we've promised to signal
+  session: Session | null;
+  /** Set instead of `session` when "running" backs onto an adopted foreign
+   *  process — no captured output, just a pid we've promised to signal
    *  responsibly. */
   externalPid: number | null;
   detected: DetectedExternal | null;
@@ -130,7 +173,7 @@ interface Runtime {
 
 export declare interface ProcessManager {
   on(event: "update", listener: (id: string) => void): this;
-  on(event: "log", listener: (id: string, lines: string[]) => void): this;
+  on(event: "log", listener: (id: string, lines: LogLine[]) => void): this;
   /** Deliberately not called "error": EventEmitter throws on an emitted
    *  "error" with no listener, which would turn a failed `docker start` into
    *  a dead daemon. */
@@ -143,10 +186,11 @@ export class ProcessManager extends EventEmitter {
   constructor(servers: RuntimeServerConfig[]) {
     super();
     for (const config of servers) this.runtimes.set(config.id, this.freshRuntime(config));
+    setInterval(() => this.pollSessions(), SESSION_POLL_MS).unref();
   }
 
   private freshRuntime(config: RuntimeServerConfig): Runtime {
-    return {
+    const rt: Runtime = {
       config,
       state: {
         id: config.id,
@@ -161,13 +205,132 @@ export class ProcessManager extends EventEmitter {
       logs: [],
       lineBuffer: "",
       stderrBuffer: "",
-      pty: null,
+      session: null,
       externalPid: null,
       detected: null,
       explicitStop: false,
       killTimer: null,
       dockerLogProc: null,
     };
+    this.reattach(rt);
+    return rt;
+  }
+
+  /** Picks up a service a previous daemon started, if its wrapper is still
+   *  the same live process: restores the saved lines and resumes the log
+   *  file where that daemon stopped reading. */
+  private reattach(rt: Runtime) {
+    if (rt.config.kind !== "process") return;
+    const path = sessionPath(rt.config.id, "json");
+    let saved: SavedSession;
+    try {
+      saved = JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      return;
+    }
+    const startedAt = processStartedAtSync(saved.pid);
+    if (startedAt == null || Math.abs(startedAt - saved.startedAt) > PID_REUSE_TOLERANCE_MS) {
+      rmSync(path, { force: true });
+      return;
+    }
+    rt.logs = saved.lines ?? [];
+    rt.lineBuffer = saved.partial ?? "";
+    Object.assign(rt.state, { status: "running", pid: saved.pid, startedAt: saved.startedAt, external: false });
+    this.attach(rt, saved);
+  }
+
+  private attach(rt: Runtime, { pid, startedAt, offset }: SavedSession) {
+    const session: Session = { pid, startedAt, offset, decoder: new StringDecoder("utf8"), watcher: null };
+    rt.session = session;
+    try {
+      session.watcher = watch(sessionPath(rt.config.id, "log"), () => this.pump(rt));
+    } catch {
+      // The poll below still reads it, a second late.
+    }
+    this.pump(rt);
+  }
+
+  /** Reads whatever the service appended to its log file since last time. */
+  private pump(rt: Runtime) {
+    const session = rt.session;
+    if (!session) return;
+    const path = sessionPath(rt.config.id, "log");
+    let fd: number;
+    try {
+      fd = openSync(path, "r");
+    } catch {
+      return;
+    }
+    try {
+      if (fstatSync(fd).size < session.offset) session.offset = 0;
+      const buf = Buffer.alloc(64 * 1024);
+      for (let n; (n = readSync(fd, buf, 0, buf.length, session.offset)) > 0; ) {
+        session.offset += n;
+        this.handleData(rt.config.id, session.decoder.write(buf.subarray(0, n)));
+      }
+      // The service appends (O_APPEND), so truncating under it is safe; the
+      // last LOG_BUFFER_LINES are already in memory.
+      if (session.offset > LOG_FILE_MAX_BYTES) {
+        truncateSync(path, 0);
+        session.offset = 0;
+      }
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  /** Catches up every session's output and notices wrappers that exited.
+   *  Polled rather than event-driven so a re-attached session (not our child)
+   *  is handled the same way as one this daemon spawned. */
+  private pollSessions() {
+    for (const rt of this.runtimes.values()) {
+      const session = rt.session;
+      if (!session) continue;
+      this.pump(rt);
+      if (this.pidAlive(session.pid)) continue;
+      let code: number | null = null;
+      try {
+        code = Number(readFileSync(sessionPath(rt.config.id, "exit"), "utf8").trim());
+      } catch {
+        // Killed before it could record one.
+      }
+      this.handleExit(rt.config.id, Number.isFinite(code) ? code : null);
+    }
+  }
+
+  private saveSession(rt: Runtime, withLogs: boolean) {
+    const session = rt.session;
+    if (!session) return;
+    const saved: SavedSession = { pid: session.pid, startedAt: session.startedAt, offset: session.offset };
+    if (withLogs) Object.assign(saved, { lines: rt.logs, partial: rt.lineBuffer });
+    writeFileSync(sessionPath(rt.config.id, "json"), JSON.stringify(saved));
+  }
+
+  /** Signals a process and everything under it. The tree is captured once by
+   *  the caller: after `script` exits its children are reparented to init. */
+  private processTree(pid: number): number[] {
+    const children = new Map<number, number[]>();
+    try {
+      for (const row of execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 3000 }).trim().split("\n")) {
+        const [child, parent] = row.trim().split(/\s+/).map(Number);
+        children.set(parent, [...(children.get(parent) ?? []), child]);
+      }
+    } catch {
+      // Fall back to the root alone.
+    }
+    const out = [pid];
+    for (let i = 0; i < out.length; i++) out.push(...(children.get(out[i]) ?? []));
+    return out;
+  }
+
+  private signalAll(pids: number[], signal: NodeJS.Signals) {
+    for (const pid of pids) {
+      try {
+        process.kill(pid, signal);
+      } catch {
+        // Already gone.
+      }
+    }
   }
 
   snapshot(id: string): RuntimeSnapshot | null {
@@ -189,7 +352,7 @@ export class ProcessManager extends EventEmitter {
     return this.runtimes.get(id)?.config ?? null;
   }
 
-  logBacklog(id: string): string[] {
+  logBacklog(id: string): LogLine[] {
     return this.runtimes.get(id)?.logs ?? [];
   }
 
@@ -197,9 +360,10 @@ export class ProcessManager extends EventEmitter {
   logNote(id: string, text: string) {
     const rt = this.runtimes.get(id);
     if (!rt) return;
-    rt.logs.push(text);
+    const line = { t: Date.now(), text };
+    rt.logs.push(line);
     if (rt.logs.length > LOG_BUFFER_LINES) rt.logs.splice(0, rt.logs.length - LOG_BUFFER_LINES);
-    this.emit("log", id, [text]);
+    this.emit("log", id, [line]);
   }
 
   /** A failed start/stop/restart, reported to the user rather than only to a
@@ -298,7 +462,7 @@ export class ProcessManager extends EventEmitter {
    *  pid from the same tick, so it skips the detected round-trip). */
   private async adopt(id: string, pid: number, port: number): Promise<boolean> {
     const rt = this.runtimes.get(id);
-    if (!rt || rt.pty || rt.externalPid) return false;
+    if (!rt || rt.session || rt.externalPid) return false;
     const startedAt = await processStartedAt(pid);
     if (startedAt == null) {
       rt.detected = null;
@@ -370,7 +534,7 @@ export class ProcessManager extends EventEmitter {
       await this.stopDocker(rt, rt.config.container);
       return;
     }
-    if (rt.pty) {
+    if (rt.session) {
       const exited = new Promise<void>((resolve) => this.once(`exited:${id}`, () => resolve()));
       this.stop(id);
       await exited;
@@ -386,7 +550,7 @@ export class ProcessManager extends EventEmitter {
       this.startDocker(rt, rt.config.container);
       return;
     }
-    if (rt.pty || rt.externalPid) return;
+    if (rt.session || rt.externalPid) return;
     if (!rt.config.command.trim()) {
       this.logNote(id, "[devhub] nothing to start — devhub observed this service but has no launcher for it. Save one to take control.");
       return;
@@ -401,19 +565,25 @@ export class ProcessManager extends EventEmitter {
     rt.lineBuffer = "";
     this.emitUpdate(id);
 
-    const shell = process.env.SHELL ?? "/bin/zsh";
-    let child: IPty;
+    let pid: number | undefined;
     try {
-      child = pty.spawn(shell, ["-lc", rt.config.command], {
-        name: "xterm-color",
-        cols: 120,
-        rows: 30,
+      mkdirSync(SESSION_DIR, { recursive: true });
+      rmSync(sessionPath(id, "exit"), { force: true });
+      const out = openSync(sessionPath(id, "log"), "w");
+      const child = spawn("/bin/sh", ["-c", WRAPPER], {
         cwd: rt.config.cwd,
         // An `alloc` policy's assigned port arrives here as e.g. PORT=3117,
         // which is the whole mechanism that stops sibling worktrees from
         // fighting over one hardcoded port.
-        env: { ...(process.env as Record<string, string>), ...(rt.config.env ?? {}) },
+        env: { ...(process.env as Record<string, string>), ...(rt.config.env ?? {}), DEVHUB_SVC_CMD: rt.config.command, DEVHUB_SVC_EXIT: sessionPath(id, "exit") },
+        detached: true,
+        stdio: ["ignore", out, out],
       });
+      closeSync(out);
+      child.on("error", (err) => this.failure(id, "start", err));
+      child.unref();
+      pid = child.pid;
+      if (!pid) throw new Error(`could not spawn in ${rt.config.cwd}`);
     } catch (err) {
       rt.state.status = "crashed";
       this.failure(id, "start", err);
@@ -421,12 +591,10 @@ export class ProcessManager extends EventEmitter {
       return;
     }
 
-    rt.pty = child;
-    rt.state.pid = child.pid;
+    rt.state.pid = pid;
     rt.state.startedAt = Date.now();
-
-    child.onData((chunk) => this.handleData(id, chunk));
-    child.onExit(({ exitCode }) => this.handleExit(id, exitCode));
+    this.attach(rt, { pid, startedAt: rt.state.startedAt, offset: 0 });
+    this.saveSession(rt, false);
   }
 
   stop(id: string) {
@@ -436,12 +604,13 @@ export class ProcessManager extends EventEmitter {
       this.stopDocker(rt, rt.config.container);
       return;
     }
-    if (rt.pty) {
+    if (rt.session) {
       rt.explicitStop = true;
-      rt.pty.kill();
+      const tree = this.processTree(rt.session.pid);
+      this.signalAll(tree, "SIGTERM");
       rt.killTimer = setTimeout(() => {
         // Some shells swallow SIGTERM while a child is mid-startup; escalate.
-        rt.pty?.kill("SIGKILL");
+        if (rt.session) this.signalAll(tree, "SIGKILL");
       }, KILL_GRACE_MS);
       return;
     }
@@ -458,7 +627,7 @@ export class ProcessManager extends EventEmitter {
       return;
     }
     rt.state.restartCount += 1;
-    if (rt.pty) {
+    if (rt.session) {
       this.once(`exited:${id}`, () => this.start(id));
       this.stop(id);
       return;
@@ -591,7 +760,7 @@ export class ProcessManager extends EventEmitter {
     if (rt.dockerLogProc) return;
     const id = rt.config.id;
     const tail = rt.logs.length === 0 ? "200" : "0";
-    const proc = spawn("docker", ["logs", "-f", "--tail", tail, container]);
+    const proc = spawn("docker", ["logs", "-f", "-t", "--tail", tail, container]);
     rt.dockerLogProc = proc;
     proc.stdout.on("data", (buf: Buffer) => this.ingestOutput(id, buf.toString(), "stdout"));
     proc.stderr.on("data", (buf: Buffer) => this.ingestOutput(id, buf.toString(), "stderr"));
@@ -713,8 +882,16 @@ export class ProcessManager extends EventEmitter {
 
     const bufKey = stream === "stdout" ? "lineBuffer" : "stderrBuffer";
     rt[bufKey] += chunk;
-    const parts = rt[bufKey].split(/\r?\n/);
-    rt[bufKey] = parts.pop() ?? "";
+    const raw = rt[bufKey].split(/\r?\n/);
+    rt[bufKey] = raw.pop() ?? "";
+    const now = Date.now();
+    const lines: LogLine[] = raw.map((line) => {
+      const ts = rt.config.kind === "docker" ? DOCKER_TS_RE.exec(line) : null;
+      const text = ts ? line.slice(ts[0].length) : line;
+      // A bare \r redraws the line in a terminal; keep only what it ended as.
+      return { t: ts ? Date.parse(ts[1]) : now, text: text.slice(text.lastIndexOf("\r") + 1) };
+    });
+    const parts = lines.map((line) => line.text);
 
     if (!rt.state.port && rt.config.port === undefined) {
       // Check completed lines first, then whatever's still buffered — a
@@ -727,8 +904,8 @@ export class ProcessManager extends EventEmitter {
       }
     }
 
-    if (parts.length === 0) return;
-    const collapsed = collapseBlankRuns(parts, rt.logs[rt.logs.length - 1]);
+    if (lines.length === 0) return;
+    const collapsed = collapseBlankRuns(lines, rt.logs[rt.logs.length - 1]);
     if (collapsed.length === 0) return;
     rt.logs.push(...collapsed);
     if (rt.logs.length > LOG_BUFFER_LINES) rt.logs.splice(0, rt.logs.length - LOG_BUFFER_LINES);
@@ -749,12 +926,14 @@ export class ProcessManager extends EventEmitter {
     this.ingestOutput(id, chunk, "stdout");
   }
 
-  private handleExit(id: string, exitCode: number) {
+  private handleExit(id: string, exitCode: number | null) {
     const rt = this.runtimes.get(id);
     if (!rt) return;
 
     if (rt.killTimer) clearTimeout(rt.killTimer);
-    rt.pty = null;
+    rt.session?.watcher?.close();
+    rt.session = null;
+    rmSync(sessionPath(id, "json"), { force: true });
     rt.state.pid = null;
     rt.state.exitCode = exitCode;
     rt.state.status = rt.explicitStop || exitCode === 0 ? "stopped" : "crashed";
@@ -772,19 +951,17 @@ export class ProcessManager extends EventEmitter {
     if (this.runtimes.has(id)) this.emit("update", id);
   }
 
-  /** Called on daemon shutdown. Stops ONLY processes devhub itself spawned —
-   *  those would be orphaned otherwise.
-   *
-   *  It must never touch an adopted process. Devhub now adopts every service
-   *  it observes running, so that they are controllable without anyone
-   *  clicking anything; those processes existed before the daemon started and
-   *  have to outlive it. Killing them here turns "restart devhub" into "lose
-   *  every dev server on the machine". Docker containers are left alone for
-   *  the same reason. */
+  /** Called on daemon shutdown. Stops nothing: services devhub started run
+   *  detached and are re-attached by the next daemon, which picks up their
+   *  saved lines here. Adopted processes and containers were never ours to
+   *  stop. */
   shutdown() {
     for (const rt of this.runtimes.values()) {
       if (rt.config.kind === "docker") this.detachDockerLogFollower(rt);
-      else if (rt.pty) this.stop(rt.config.id);
+      else if (rt.session) {
+        this.pump(rt);
+        this.saveSession(rt, true);
+      }
     }
   }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ActivityEvent, AgentRun, Alert, NeverStarted, Orphan, PortReservation, PortRow, ProjectView, RepoView, ServiceAnnouncement, ServiceView, WorktreeView } from "@devhub/shared";
-import { Button, EmptyState, Icon, IconButton, MenuButton, StatusDot, ToastStack, type MenuButtonItem, type ToastData } from "../ds";
+import { Button, EmptyState, Icon, IconButton, MenuButton, STATUS_ROLES, StatusDot, ToastStack, type MenuButtonItem, type ToastData } from "../ds";
 import type { Devhub } from "../hooks/useDevhub";
 import { bytes, dur, gitSummary, usage } from "../lib/format";
 import { tildify } from "../lib/paths";
@@ -176,7 +176,6 @@ export function Dashboard({
             devhub={devhub}
             now={now}
             pushToast={pushToast}
-            connected={connected}
             compact={compact}
             canMoveUp={projects.findIndex((p) => p.id === selected.id) > 0}
             canMoveDown={projects.findIndex((p) => p.id === selected.id) < projects.length - 1}
@@ -812,7 +811,6 @@ function LaunchProject({
   devhub,
   now,
   pushToast,
-  connected,
   compact,
   canMoveUp,
   canMoveDown,
@@ -833,7 +831,6 @@ function LaunchProject({
   devhub: Devhub;
   now: number;
   pushToast: (t: Omit<ToastData, "id">) => void;
-  connected: boolean;
   compact: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
@@ -882,132 +879,107 @@ function LaunchProject({
   const previewUrl = announcedPreview?.url ?? pageUrl(selected?.services ?? []);
   const currentRun = focusedRun(workspaceRuns);
   const currentBlocker = currentRun ? blockedCheck(currentRun) : undefined;
-  const observedPorts = [...new Set(running.flatMap((service) => service.ports))].sort((a, b) => a - b);
-  const declaredSummary = currentRun
-    ? currentRun.task || `${currentRun.agent} is ${currentRun.status}`
-    : announcedServices.length > 0
-      ? `${announcedServices.length} service${announcedServices.length === 1 ? "" : "s"} announced`
-      : "No active agent declaration";
-  const observedSummary = running.length > 0
-    ? `${running.length} runtime${running.length === 1 ? "" : "s"} verified${observedPorts.length ? ` on ${observedPorts.map((port) => `:${port}`).join(", ")}` : ""}`
-    : "No runtime observed";
+  const totals = running.reduce((sum, service) => ({ cpu: sum.cpu + (service.stats?.cpu ?? 0), rssBytes: sum.rssBytes + (service.stats?.rssBytes ?? 0) }), { cpu: 0, rssBytes: 0 });
+  const restartable = running.filter((service) => service.launchable);
+  const git = gitSummary(selected?.entries[0]?.worktree.git);
 
   return (
     <div className="project-focus" data-dh-pane="1">
       <div className="project-focus-topline">
-        <button type="button" className="back-button" onClick={onBack}><Icon name="arrow_back" size={16} /> Projects</button>
+        <button type="button" className="back-button" onClick={onBack} aria-label="Back to projects"><Icon name="arrow_back" size={16} /></button>
         <div className="project-focus-identity">
-          <ProjectMark project={project} small />
+          <ProjectMark project={project} />
           <span>
             <strong>{project.name}</strong>
-            <small>{project.repos.length} {project.repos.length === 1 ? "repository" : "repositories"}</small>
+            <small>
+              {groups.length <= 1 && selected && <code>{selected.label}</code>}
+              {git && <span title="Uncommitted files · commits ahead/behind upstream">{git}</span>}
+              <span title={selected?.entries.map(({ worktree }) => worktree.path).join("\n")}>
+                {selected ? selected.entries.map(({ worktree }) => tildify(worktree.path)).join(" · ") : `${project.repos.length} ${project.repos.length === 1 ? "repository" : "repositories"}`}
+              </span>
+            </small>
           </span>
         </div>
-        <MenuButton
-          label={`Actions for ${project.name}`}
-          size="md"
-          compact={compact}
-          items={[
-            { key: "edit", label: "Project settings", icon: "settings", onSelect: () => onEditProject(project.id) },
-            { key: "ports", label: "View ports", icon: "lan", onSelect: onPorts },
-            { key: "reveal", label: "Reveal primary source", icon: "folder_open", onSelect: () => devhub.revealPath(project.repos[0]?.path ?? "") },
-            ...(canMoveUp ? [{ key: "up", label: "Move project up", icon: "arrow_upward", divider: true, onSelect: () => onMove(-1) }] : []),
-            ...(canMoveDown ? [{ key: "down", label: "Move project down", icon: "arrow_downward", divider: !canMoveUp, onSelect: () => onMove(1) }] : []),
-          ]}
-        />
+        {running.length > 0 && (
+          <span className="project-focus-load" data-tabular title="CPU and memory of everything this workspace runs">
+            {Math.round(totals.cpu)}% CPU · {bytes(totals.rssBytes)}
+          </span>
+        )}
+        <div className="project-row-actions project-focus-actions">
+          {previewUrl && (
+            <a className="project-row-icon" href={previewUrl} target="_blank" rel="noreferrer" title="Open page" aria-label="Open page">
+              <Icon name="open_in_new" size={16} />
+            </a>
+          )}
+          {selected && running.length > 0 ? (
+            <button
+              type="button"
+              className="project-row-action project-lifecycle is-stop"
+              disabled={busy}
+              onClick={() => selected.entries.forEach((entry) => devhub.stopWorktree(entry.worktree.path, entry.worktree.services.map((service) => service.id)))}
+            >
+              <Icon name={busy ? "progress_activity" : "stop"} size={15} />Stop
+            </button>
+          ) : selected && startable.length > 0 ? (
+            <button
+              type="button"
+              className="project-row-action project-lifecycle is-start"
+              disabled={busy}
+              onClick={() => selected.entries.forEach((entry) => devhub.startWorktree(entry.worktree.path, entry.worktree.services.map((service) => service.id)))}
+            >
+              <Icon name={busy ? "progress_activity" : "play_arrow"} size={15} />Start
+            </button>
+          ) : null}
+          <MenuButton
+            label={`More actions for ${project.name}`}
+            size="md"
+            compact={compact}
+            items={[
+              ...(restartable.length > 0 && !busy
+                ? [{ key: "restart", label: `Restart ${restartable.length === 1 ? restartable[0].displayName : `${restartable.length} services`}`, icon: "restart_alt", onSelect: () => restartable.forEach((service) => devhub.restart(service.id)) }]
+                : []),
+              ...(selected ? [{ key: "folders", label: `Open folder${selected.entries.length === 1 ? "" : "s"}`, icon: "folder_open", divider: restartable.length > 0 && !busy, onSelect: () => selected.entries.forEach((entry) => devhub.revealPath(entry.worktree.path)) }] : []),
+              { key: "ports", label: "View ports", icon: "lan", onSelect: onPorts },
+              { key: "edit", label: "Project settings", icon: "settings", divider: true, onSelect: () => onEditProject(project.id) },
+              ...(canMoveUp ? [{ key: "up", label: "Move project up", icon: "arrow_upward", onSelect: () => onMove(-1) }] : []),
+              ...(canMoveDown ? [{ key: "down", label: "Move project down", icon: "arrow_downward", onSelect: () => onMove(1) }] : []),
+            ]}
+          />
+        </div>
       </div>
 
-      <div className="workspace-picker" role="tablist" aria-label={`${project.name} workspaces`}>
-        {groups.map((group) => (
-          <button
-            key={group.id}
-            type="button"
-            role="tab"
-            aria-selected={group.id === selected?.id}
-            className={group.id === selected?.id ? "is-selected" : ""}
-            onClick={() => setSelectedId(group.id)}
-          >
-            <StatusDot status={group.liveCount > 0 ? "running" : "stopped"} size={6} />
-            <span>{group.label}</span>
-            {group.liveCount > 0 && <b>{group.liveCount}</b>}
-          </button>
-        ))}
-      </div>
+      {groups.length > 1 && (
+        <div className="workspace-picker" role="tablist" aria-label={`${project.name} workspaces`}>
+          {groups.map((group) => (
+            <button
+              key={group.id}
+              type="button"
+              role="tab"
+              aria-selected={group.id === selected?.id}
+              className={group.id === selected?.id ? "is-selected" : ""}
+              onClick={() => setSelectedId(group.id)}
+            >
+              <StatusDot status={group.liveCount > 0 ? "running" : "stopped"} size={6} />
+              <span>{group.label}</span>
+              {group.liveCount > 0 && <b>{group.liveCount}</b>}
+            </button>
+          ))}
+        </div>
+      )}
 
       {selected ? (
         <>
-          <section className="workspace-hero">
-            <div className="workspace-primary">
-              <div className="workspace-hero-copy">
-                <span className={`workspace-kicker ${!currentBlocker && (currentRun?.status === "working" || running.length) ? "is-live" : ""} ${currentBlocker || currentRun?.status === "waiting" ? "is-waiting" : ""}`}>
-                  <span />
-                  {currentRun
-                    ? `${currentRun.agent} · ${currentBlocker ? "blocked" : currentRun.status === "waiting" ? "waiting for you" : currentRun.status}`
-                    : running.length
-                      ? "Workspace live"
-                      : "Workspace ready"}
-                </span>
-                <h1>{selected.label}</h1>
-                <p>
-                  {currentRun?.task
-                    ? currentRun.task
-                    : running.length
-                    ? `${running.map((service) => service.displayName).join(", ")} ${running.length === 1 ? "is" : "are"} running.`
-                    : startable.length
-                      ? `${startable.length} launcher${startable.length === 1 ? " is" : "s are"} ready to start.`
-                      : "Nothing is running and no launcher has been declared."}
-                </p>
-                {currentRun?.detail && <p className="agent-detail">{currentRun.detail}</p>}
-                <div className="workspace-paths">
-                  {selected.entries.map(({ repo, worktree }) => <span key={worktree.path}>{repo.label} <b>{tildify(worktree.path)}</b></span>)}
-                </div>
-              </div>
-              <div className="workspace-actions">
-                {running.length > 0 ? (
-                  <Button
-                    variant="secondary"
-                    icon="stop"
-                    loading={busy}
-                    onClick={() => selected.entries.forEach((entry) => devhub.stopWorktree(entry.worktree.path, entry.worktree.services.map((service) => service.id)))}
-                  >
-                    Stop workspace
-                  </Button>
-                ) : startable.length > 0 ? (
-                  <Button
-                    variant="primary"
-                    icon="play_arrow"
-                    loading={busy}
-                    onClick={() => selected.entries.forEach((entry) => devhub.startWorktree(entry.worktree.path, entry.worktree.services.map((service) => service.id)))}
-                  >
-                    Start workspace
-                  </Button>
-                ) : null}
-                {previewUrl && <Button variant="secondary" icon="open_in_new" onClick={() => window.open(previewUrl, "_blank")}>Open page</Button>}
-                {running[0] && <Button variant="secondary" icon="terminal" onClick={() => onOpenLogs(running[0].id)}>View logs</Button>}
-                <Button
-                  variant="ghost"
-                  icon="folder_open"
-                  onClick={() => selected.entries.forEach((entry) => devhub.revealPath(entry.worktree.path))}
-                >
-                  Open folder{selected.entries.length === 1 ? "" : "s"}
-                </Button>
-              </div>
-            </div>
-            <aside className="workspace-evidence" aria-label="Declared and observed workspace state">
-              <div className="evidence-heading"><span>Evidence</span><small>{connected ? "Live" : "Last known"}</small></div>
-              <div className="evidence-claim is-declared">
-                <span><i />Declared</span>
-                <strong>{declaredSummary}</strong>
-                <small>{currentRun ? `${currentRun.agent} · updated ${dur(Math.max(0, now - currentRun.updatedAt))} ago` : "Agent and configuration intent"}</small>
-              </div>
-              <div className="evidence-claim is-observed">
-                <span><i />Observed</span>
-                <strong>{observedSummary}</strong>
-                <small>{connected ? "Verified from this machine" : "Observation paused while disconnected"}</small>
-              </div>
-              {currentBlocker && <div className="evidence-mismatch"><Icon name="priority_high" size={15} /><span>{currentBlocker.detail || currentBlocker.label}</span></div>}
-            </aside>
-          </section>
+          {currentRun && (
+            <section className={`workspace-agent${currentBlocker || currentRun.status === "waiting" ? " is-waiting" : ""}`}>
+              <span className={`workspace-kicker ${currentBlocker || currentRun.status === "waiting" ? "is-waiting" : currentRun.status === "working" ? "is-live" : ""}`}>
+                <span />
+                {currentRun.agent} · {currentBlocker ? "blocked" : currentRun.status === "waiting" ? "waiting for you" : currentRun.status} · {dur(Math.max(0, now - currentRun.updatedAt))} ago
+              </span>
+              <strong>{currentRun.task || "No task given"}</strong>
+              {currentRun.detail && <p>{currentRun.detail}</p>}
+              {currentBlocker && <p className="workspace-agent-blocker"><Icon name="priority_high" size={15} />{currentBlocker.detail || currentBlocker.label}</p>}
+            </section>
+          )}
 
           {(announcedServices.length > 0 || reservedPorts.length > 0) && (
             <section className="agent-intent" aria-label="Agent-declared runtime intent">
@@ -1054,31 +1026,37 @@ function LaunchProject({
           )}
 
           <section className="focus-section">
-            <div className="focus-section-heading">
-              <h2>Runtime</h2>
-              <span>{running.length ? `${running.length} running` : `${selected.services.length} available`}</span>
+            <div className="ledger-heading">
+              <h2>Services</h2>
+              <span>{running.length ? `${running.length} of ${selected.services.length} running` : selected.services.length}</span>
             </div>
-            <div className="runtime-list">
-              {selected.entries.flatMap(({ repo, worktree }) =>
-                worktree.services.map((service) => (
-                  <ServiceRow
-                    key={service.id}
-                    service={service}
-                    projectId={project.id}
-                    repoPath={repo.path}
-                    devhub={devhub}
-                    now={now}
-                    pushToast={pushToast}
-                    compact={compact}
-                    open={openLogId === service.id}
-                    revealed={reveal === service.id}
-                    onOpenLogs={onOpenLogs}
-                    onEditLauncher={onEditLauncher}
-                  />
-                )),
-              )}
-              {selected.services.length === 0 && <div className="runtime-empty">An agent can announce a runtime here when it starts one.</div>}
-            </div>
+            {selected.services.length > 0 ? (
+              <>
+                <ServiceColumns />
+                <div className="project-rows">
+                  {selected.entries.flatMap(({ repo, worktree }) =>
+                    worktree.services.map((service) => (
+                      <ServiceRow
+                        key={service.id}
+                        service={service}
+                        projectId={project.id}
+                        repoPath={repo.path}
+                        devhub={devhub}
+                        now={now}
+                        pushToast={pushToast}
+                        compact={compact}
+                        open={openLogId === service.id}
+                        revealed={reveal === service.id}
+                        onOpenLogs={onOpenLogs}
+                        onEditLauncher={onEditLauncher}
+                      />
+                    )),
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="runtime-empty">An agent can announce a runtime here when it starts one.</div>
+            )}
           </section>
 
           {selected.entries.flatMap((entry) => entry.repo.orphans).length > 0 && (
@@ -2149,63 +2127,77 @@ function ServiceRow({
       : []),
   ];
 
-  const metadata = s.ports.length
-    ? s.ports.map((port) => `localhost:${port}`).join(" · ")
-    : s.command ?? s.container ?? tildify(s.cwd);
+  const pageHref = s.url ?? (s.ports[0] ? `http://localhost:${s.ports[0]}` : null);
+  const state = live ? "live" : s.status === "crashed" ? "crashed" : "stopped";
+  const note = [s.kind === "docker" ? "Docker" : null, s.mode === "built" ? "Built" : null, s.launchable ? null : "No launcher"].filter(Boolean).join(" · ");
+  const detail = s.kind === "docker" ? (s.container === s.displayName ? null : s.container) : s.command ?? tildify(s.cwd);
 
   return (
-    <div className={`service-row is-${s.status} ${open ? "is-open" : ""} ${revealed ? "is-revealed" : ""}`}>
-      <span className="service-row-icon"><Icon name={s.kind === "docker" ? "deployed_code" : "terminal"} size={18} /></span>
-      <div className="service-row-copy">
-        <div className="service-row-title">
+    <div className={`project-row service-row is-${s.status}${open ? " is-open" : ""}${revealed ? " is-revealed" : ""}`}>
+      <button type="button" className="project-row-main service-row-main" onClick={() => onOpenLogs(s.id)} title={`Show ${s.displayName} logs`}>
+        <span className="service-row-icon"><Icon name={s.kind === "docker" ? "deployed_code" : "terminal"} size={16} /></span>
+        <span className="project-row-identity">
           <strong title={s.displayName}>{s.displayName}</strong>
-          {s.kind === "docker" && <span>Docker</span>}
-          {s.mode === "built" && <span>Built</span>}
-          {!s.launchable && <span title="DevHub can stop this runtime but needs a launcher before it can start it">No launcher</span>}
-        </div>
-        <div className="service-row-meta" title={metadata}>
-          {s.ports.length > 0
-            ? s.ports.map((port) => <a key={port} href={`http://localhost:${port}`} target="_blank" rel="noreferrer">localhost:{port}</a>)
-            : <span>{metadata}</span>}
-          {s.policy?.ports === "alloc" && s.assignedPort != null && <span>reserved :{s.assignedPort}</span>}
-          {live && s.startedAt && <span>up {dur(now - s.startedAt)}</span>}
-          {live && s.stats && <span data-tabular title={`${s.stats.procs} process${s.stats.procs === 1 ? "" : "es"}`}>{usage(s.stats)}</span>}
-          {s.status === "crashed" && <span className="is-error">exited {s.exitCode ?? "?"}</span>}
-        </div>
-      </div>
-      <span className={`service-row-state is-${s.status}`}><i />{s.status}</span>
-      <div className="service-row-actions">
-        {live ? (
-          <>
-            <Button size="sm" variant="ghost" icon="terminal" onClick={() => onOpenLogs(s.id)}>
-              Logs
-            </Button>
-            {s.launchable && (
-              <Button size="sm" variant="ghost" icon="restart_alt" loading={busy} onClick={() => devhub.restart(s.id)}>
-                Restart
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              icon="stop"
-              loading={busy}
-              onClick={() => {
-                devhub.stop(s.id);
-                pushToast({ message: `Stopping ${s.displayName}`, actionLabel: "Start again", onAction: () => devhub.start(s.id) });
-              }}
-            >
-              Stop
-            </Button>
-          </>
-        ) : (
-          <Button size="sm" variant="ghost" icon="play_arrow" loading={busy} disabled={!s.launchable} onClick={() => devhub.start(s.id)}>
-            Start
-          </Button>
+          <span title={detail ?? undefined}>{note && <b>{note}</b>}<code>{detail}</code></span>
+        </span>
+        <span className="service-row-address" data-tabular>
+          {s.ports.length > 0 ? `:${s.ports.join(" :")}` : s.policy?.ports === "alloc" && s.assignedPort != null ? <span title="Reserved for this worktree">:{s.assignedPort} reserved</span> : "—"}
+        </span>
+        <span className="project-row-num" data-tabular>{live && s.startedAt ? dur(now - s.startedAt) : s.status === "crashed" ? `exit ${s.exitCode ?? "?"}` : "—"}</span>
+        <span className="project-row-num" data-tabular title={s.stats ? `${s.stats.procs} process${s.stats.procs === 1 ? "" : "es"}` : undefined}>{live && s.stats ? `${Math.round(s.stats.cpu)}%` : "—"}</span>
+        <span className="project-row-num" data-tabular>{live && s.stats ? bytes(s.stats.rssBytes) : "—"}</span>
+        <span className={`project-row-state is-${state}`}><i />{STATUS_ROLES[s.status]?.label ?? s.status}</span>
+      </button>
+
+      <div className="project-row-actions" aria-label={`Actions for ${s.displayName}`}>
+        {live && pageHref && (
+          <a className="project-row-icon" href={pageHref} target="_blank" rel="noreferrer" title="Open page" aria-label={`Open ${s.displayName}`}>
+            <Icon name="open_in_new" size={16} />
+          </a>
         )}
-        {!live && <Button size="sm" variant="ghost" icon="terminal" onClick={() => onOpenLogs(s.id)}>Logs</Button>}
-        <MenuButton label={`Actions for ${s.displayName}`} items={items} compact={compact} />
+        <IconButton icon="terminal" label="Logs" selected={open} onClick={() => onOpenLogs(s.id)} />
+        {live ? (
+          <button
+            type="button"
+            className="project-row-action project-lifecycle is-stop"
+            disabled={busy}
+            onClick={() => {
+              devhub.stop(s.id);
+              pushToast({ message: `Stopping ${s.displayName}`, actionLabel: "Start again", onAction: () => devhub.start(s.id) });
+            }}
+          >
+            <Icon name={busy ? "progress_activity" : "stop"} size={15} />Stop
+          </button>
+        ) : (
+          <button type="button" className="project-row-action project-lifecycle is-start" disabled={busy || !s.launchable} onClick={() => devhub.start(s.id)}>
+            <Icon name={busy ? "progress_activity" : "play_arrow"} size={15} />Start
+          </button>
+        )}
+        <MenuButton
+          label={`More actions for ${s.displayName}`}
+          size="md"
+          compact={compact}
+          items={live && s.launchable && !busy ? [{ key: "restart", label: "Restart", icon: "restart_alt", onSelect: () => devhub.restart(s.id) }, { ...items[0], divider: true }, ...items.slice(1)] : items}
+        />
       </div>
+    </div>
+  );
+}
+
+/** Column labels for the services table; shares `.service-row`'s grid. */
+function ServiceColumns() {
+  return (
+    <div className="project-row service-row project-columns" aria-hidden="true">
+      <div className="project-row-main service-row-main">
+        <span />
+        <span>Service</span>
+        <span>Address</span>
+        <span className="project-row-num">Uptime</span>
+        <span className="project-row-num">CPU</span>
+        <span className="project-row-num">Memory</span>
+        <span>Status</span>
+      </div>
+      <div className="project-row-actions" />
     </div>
   );
 }
