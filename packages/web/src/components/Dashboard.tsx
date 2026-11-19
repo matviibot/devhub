@@ -849,7 +849,6 @@ function LaunchProject({
 }) {
   const groups = useMemo(() => workspaceGroups(project), [project]);
   const [selectedId, setSelectedId] = useState(() => groups[0]?.id ?? "");
-  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   useEffect(() => {
     if (reveal) {
@@ -882,6 +881,28 @@ function LaunchProject({
   const totals = running.reduce((sum, service) => ({ cpu: sum.cpu + (service.stats?.cpu ?? 0), rssBytes: sum.rssBytes + (service.stats?.rssBytes ?? 0) }), { cpu: 0, rssBytes: 0 });
   const restartable = running.filter((service) => service.launchable);
   const git = gitSummary(selected?.entries[0]?.worktree.git);
+
+  // Same split as the home ledger: crashed services need you, the rest follow running-first.
+  const rows = selected?.entries.flatMap(({ repo, worktree }) => worktree.services.map((service) => ({ repo, service }))) ?? [];
+  const isLive = (service: ServiceView) => service.status === "running" || service.status === "starting";
+  const needsYou = rows.filter(({ service }) => service.status === "crashed");
+  const remaining = rows.filter(({ service }) => service.status !== "crashed").sort((a, b) => Number(isLive(b.service)) - Number(isLive(a.service)));
+  const serviceRow = ({ repo, service }: (typeof rows)[number]) => (
+    <ServiceRow
+      key={service.id}
+      service={service}
+      projectId={project.id}
+      repoPath={repo.path}
+      devhub={devhub}
+      now={now}
+      pushToast={pushToast}
+      compact={compact}
+      open={openLogId === service.id}
+      revealed={reveal === service.id}
+      onOpenLogs={onOpenLogs}
+      onEditLauncher={onEditLauncher}
+    />
+  );
 
   return (
     <div className="project-focus" data-dh-pane="1">
@@ -1025,39 +1046,30 @@ function LaunchProject({
             </section>
           )}
 
-          <section className="focus-section">
-            <div className="ledger-heading">
-              <h2>Services</h2>
-              <span>{running.length ? `${running.length} of ${selected.services.length} running` : selected.services.length}</span>
-            </div>
-            {selected.services.length > 0 ? (
-              <>
-                <ServiceColumns />
-                <div className="project-rows">
-                  {selected.entries.flatMap(({ repo, worktree }) =>
-                    worktree.services.map((service) => (
-                      <ServiceRow
-                        key={service.id}
-                        service={service}
-                        projectId={project.id}
-                        repoPath={repo.path}
-                        devhub={devhub}
-                        now={now}
-                        pushToast={pushToast}
-                        compact={compact}
-                        open={openLogId === service.id}
-                        revealed={reveal === service.id}
-                        onOpenLogs={onOpenLogs}
-                        onEditLauncher={onEditLauncher}
-                      />
-                    )),
-                  )}
+          {selected.services.length > 0 ? (
+            <div className="project-ledger">
+              {needsYou.length > 0 && (
+                <section className="project-ledger-section is-attention">
+                  <div className="ledger-heading"><h2>Needs you</h2><span>{needsYou.length}</span></div>
+                  <ServiceColumns />
+                  <div className="project-rows">{needsYou.map(serviceRow)}</div>
+                </section>
+              )}
+              <section className="project-ledger-section">
+                <div className="ledger-heading">
+                  <h2>{needsYou.length > 0 ? "Everything else" : "Services"}</h2>
+                  <span>{running.length ? `${running.length} of ${remaining.length} running` : remaining.length}</span>
                 </div>
-              </>
-            ) : (
+                {needsYou.length === 0 && <ServiceColumns />}
+                <div className="project-rows">{remaining.map(serviceRow)}</div>
+              </section>
+            </div>
+          ) : (
+            <section className="focus-section">
+              <div className="ledger-heading"><h2>Services</h2><span>0</span></div>
               <div className="runtime-empty">An agent can announce a runtime here when it starts one.</div>
-            )}
-          </section>
+            </section>
+          )}
 
           {selected.entries.flatMap((entry) => entry.repo.orphans).length > 0 && (
             <OrphanSections orphans={selected.entries.flatMap((entry) => entry.repo.orphans)} onKill={devhub.killOrphan} pending={devhub.pending} />
@@ -1074,23 +1086,44 @@ function LaunchProject({
 
       {neverStarted.length > 0 && <NeverStartedSection items={neverStarted} devhub={devhub} reveal={reveal} />}
 
-      <section className="sources-disclosure">
-        <button type="button" onClick={() => setSourcesOpen((open) => !open)} aria-expanded={sourcesOpen}>
-          <span><Icon name="folder_copy" size={17} /> Sources</span>
-          <span>{project.repos.length} {project.repos.length === 1 ? "repository" : "repositories"} <Icon name={sourcesOpen ? "expand_less" : "expand_more"} size={17} /></span>
-        </button>
-        {sourcesOpen && (
-          <div>
-            {project.repos.map((repo) => (
-              <button type="button" key={repo.path} onClick={() => devhub.revealPath(repo.path)}>
-                <ProjectMark project={{ ...project, name: repo.label }} small />
-                <span><strong>{repo.label}</strong><small>{repo.path}</small></span>
-                <Icon name="folder_open" size={16} />
-              </button>
-            ))}
+      {project.repos.length > 0 && (
+        <section className="project-ledger-section sources-section">
+          <div className="ledger-heading"><h2>Sources</h2><span>{project.repos.length}</span></div>
+          <div className="project-row source-row project-columns" aria-hidden="true">
+            <div className="project-row-main source-row-main">
+              <span />
+              <span>Repository</span>
+              <span>Branch</span>
+              <span>Changes</span>
+              <span>Worktrees</span>
+            </div>
+            <div className="project-row-actions" />
           </div>
-        )}
-      </section>
+          <div className="project-rows">
+            {project.repos.map((repo) => {
+              const main = repo.worktrees.find((worktree) => worktree.isMain) ?? repo.worktrees[0];
+              const changes = gitSummary(main?.git);
+              return (
+                <div key={repo.path} className={`project-row source-row${repo.missing ? " is-missing" : ""}`}>
+                  <button type="button" className="project-row-main source-row-main" onClick={() => devhub.revealPath(repo.absPath)} title={`Reveal ${repo.absPath}`} disabled={repo.missing}>
+                    <span className="service-row-icon"><Icon name={repo.missing ? "folder_off" : repo.isGit ? "folder_data" : "folder"} size={16} /></span>
+                    <span className="project-row-identity">
+                      <strong title={repo.label}>{repo.label}</strong>
+                      <span><code>{tildify(repo.absPath)}</code></span>
+                    </span>
+                    <span className="service-row-address">{repo.missing ? "Missing on disk" : !repo.isGit ? "Not a git repo" : main ? (main.branch ?? `detached @${main.head.slice(0, 7)}`) : "—"}</span>
+                    <span className="source-row-meta">{changes ?? (main?.git ? "Clean" : "—")}</span>
+                    <span className="source-row-meta" data-tabular>{repo.worktrees.length || "—"}</span>
+                  </button>
+                  <div className="project-row-actions" aria-label={`Actions for ${repo.label}`}>
+                    <IconButton icon="folder_open" label="Reveal in Finder" disabled={repo.missing} onClick={() => devhub.revealPath(repo.absPath)} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

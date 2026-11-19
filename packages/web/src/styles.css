@@ -1985,87 +1985,45 @@ a:hover {
   color: #d28a82;
 }
 
-.sources-disclosure {
-  margin-top: 28px;
-  border-top: 1px solid var(--launch-line);
-  border-bottom: 1px solid var(--launch-line);
+.sources-section {
+  margin-top: 32px;
 }
 
-.sources-disclosure > button {
+.project-row-main.source-row-main {
   width: 100%;
-  min-height: 54px;
-  padding: 0 4px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  border: 0;
-  background: transparent;
-  color: var(--launch-text);
-  cursor: pointer;
-  font: var(--type-row-title);
+  padding-block: 10px;
+  grid-template-columns: 28px minmax(160px, 1.4fr) minmax(110px, 0.8fr) minmax(110px, 0.8fr) 104px;
+  font: inherit;
 }
 
-.sources-disclosure > button:hover {
-  background: var(--dh-bg-row-hover);
-  color: var(--dh-text-bright);
+.source-row .service-row-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
 }
 
-.sources-disclosure > button > span {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sources-disclosure > button > span:last-child {
-  color: var(--launch-muted);
-  font: var(--type-meta-text);
-}
-
-.sources-disclosure > div {
-  padding: 0 0 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sources-disclosure > div > button {
-  min-height: 52px;
-  padding: 8px 10px;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--launch-muted);
-  cursor: pointer;
-  text-align: left;
-}
-
-.sources-disclosure > div > button:hover {
-  background: var(--launch-surface);
-}
-
-.sources-disclosure > div > button > span:nth-child(2) {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.sources-disclosure strong {
-  color: var(--launch-text);
-  font: var(--type-row-title);
-}
-
-.sources-disclosure small {
+.source-row .project-row-identity code {
   overflow: hidden;
-  color: var(--launch-muted);
-  font: var(--type-code);
+  color: #78818d;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.source-row-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--launch-muted);
+  font: var(--type-meta-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-row.is-missing .service-row-address {
+  color: var(--dh-status-crashed);
+}
+
+.source-row-main:disabled {
+  cursor: default;
 }
 
 /* --------------------------------------------------------------- attention */
@@ -2594,7 +2552,8 @@ a:hover {
     gap: 11px;
   }
   .project-row-context,
-  .service-row-address {
+  .service-row-address,
+  .source-row-meta {
     grid-column: 2 / -1;
   }
   .project-focus-load {
