@@ -20,21 +20,16 @@ export function App() {
   const lastConnectedNow = useRef(tickingNow);
   if (devhub.connected) lastConnectedNow.current = tickingNow;
   const now = devhub.connected ? tickingNow : lastConnectedNow.current;
-  const { ref: rootRef, compact, medium } = useBreakpoint<HTMLDivElement>();
+  const { ref: rootRef, compact } = useBreakpoint<HTMLDivElement>();
 
   // Services are rebuilt every tick, so resolve the open log target by id on
   // each render instead of holding onto a stale object.
-  const openService = useMemo(() => {
+  const openLog = useMemo(() => {
     if (!openLogId) return null;
     for (const p of devhub.projects) {
-      for (const r of p.repos) {
-        for (const w of r.worktrees) {
-          const hit = w.services.find((s) => s.id === openLogId);
-          if (hit) return hit;
-        }
-      }
-      const loose = p.looseServices.find((s) => s.id === openLogId);
-      if (loose) return loose;
+      const services = p.repos.flatMap((r) => r.worktrees.flatMap((w) => w.services)).concat(p.looseServices);
+      const service = services.find((s) => s.id === openLogId);
+      if (service) return { service, services };
     }
     return null;
   }, [devhub.projects, openLogId]);
@@ -148,16 +143,17 @@ export function App() {
         pushToast={pushToast}
       />
 
-      {openService && (
+      {openLog && (
         <LogDrawer
-          service={openService}
+          service={openLog.service}
+          services={openLog.services}
+          onSelect={setOpenLogId}
           addLogListener={devhub.addLogListener}
           onClose={() => setOpenLogId(null)}
           onStop={devhub.stop}
           onRestart={devhub.restart}
           now={now}
           compact={compact}
-          medium={medium}
           pending={devhub.pending}
         />
       )}

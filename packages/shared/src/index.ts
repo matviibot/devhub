@@ -433,10 +433,16 @@ export interface NeverStarted {
   exitCode: number | null;
 }
 
+/** One captured output line; `t` is when it was written (epoch ms). */
+export interface LogLine {
+  t: number;
+  text: string;
+}
+
 export type ServerMessage =
   | ({ type: "snapshot" } & Snapshot)
-  | { type: "log"; id: string; lines: string[] }
-  | { type: "logBacklog"; id: string; lines: string[] }
+  | { type: "log"; id: string; lines: LogLine[] }
+  | { type: "logBacklog"; id: string; lines: LogLine[] }
   | { type: "scriptsDetected"; cwd: string; scripts: DetectedScript[]; hasPackageJson: boolean }
   | { type: "directoryListing"; path: string; parent: string | null; entries: DirectoryEntry[]; error?: string }
   | { type: "commandError"; message: string }

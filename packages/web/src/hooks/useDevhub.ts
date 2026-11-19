@@ -4,6 +4,7 @@ import type {
   DetectedScript,
   DirectoryEntry,
   Launcher,
+  LogLine,
   PortPolicy,
   Prefs,
   RepoInput,
@@ -39,7 +40,7 @@ export interface DirectoryListing {
   error?: string;
 }
 
-type LogListener = (lines: string[], isBacklog: boolean) => void;
+type LogListener = (lines: LogLine[], isBacklog: boolean) => void;
 
 interface Detected {
   cwd: string;
@@ -59,8 +60,8 @@ export function useDevhub() {
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedRef = useRef<Set<string>>(new Set());
   const pendingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  // Log lines go straight to xterm via listeners rather than through React
-  // state — they're append-only and high-volume.
+  // Log lines go straight to the open log view via listeners rather than
+  // through app state — they're append-only and high-volume.
   const logListenersRef = useRef<Map<string, Set<LogListener>>>(new Map());
 
   useEffect(() => {
@@ -164,7 +165,10 @@ export function useDevhub() {
         send({ type: "subscribeLogs", id });
       }
       return () => {
-        logListenersRef.current.get(id)?.delete(listener);
+        const listeners = logListenersRef.current.get(id);
+        listeners?.delete(listener);
+        // Unsubscribe when nobody listens, so the next viewer gets a fresh backlog.
+        if (!listeners?.size && subscribedRef.current.delete(id)) send({ type: "unsubscribeLogs", id });
       };
     },
     [send],

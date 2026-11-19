@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 import { processGroupId, processStartedAt, type DockerInspectState } from "./externalScan.js";
+import type { LogLine } from "@devhub/shared";
 
 /** Runtime status of one service. Deliberately daemon-local: the wire-facing
  *  `ServiceStatus` in @devhub/shared is assembled by RepoStore, which merges
@@ -58,15 +59,17 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
 // cursor-position/erase codes (e.g. "\x1b[1G\x1b[0K"), which split() turns
 // into dozens of "blank" lines that a real terminal would have erased.
 const ANY_ESCAPE_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+// `docker logs -t` prefixes each line with an RFC 3339 time.
+const DOCKER_TS_RE = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)) /;
 const isVisuallyBlank = (line: string) => line.replace(ANY_ESCAPE_RE, "").trim() === "";
 
 /** Collapses runs of visually-blank lines to at most one, preserving
  *  intentional single-blank-line spacing while dropping spinner noise. */
-function collapseBlankRuns(newLines: string[], lastStored: string | undefined): string[] {
-  const out: string[] = [];
-  let prevBlank = lastStored !== undefined && isVisuallyBlank(lastStored);
+function collapseBlankRuns(newLines: LogLine[], lastStored: LogLine | undefined): LogLine[] {
+  const out: LogLine[] = [];
+  let prevBlank = lastStored !== undefined && isVisuallyBlank(lastStored.text);
   for (const line of newLines) {
-    const blank = isVisuallyBlank(line);
+    const blank = isVisuallyBlank(line.text);
     if (blank && prevBlank) continue;
     out.push(line);
     prevBlank = blank;
@@ -109,7 +112,7 @@ export type RuntimeServerConfig = ProcessRuntimeConfig | DockerRuntimeConfig;
 interface Runtime {
   config: RuntimeServerConfig;
   state: RuntimeSnapshot;
-  logs: string[];
+  logs: LogLine[];
   lineBuffer: string;
   /** Second, independent line-carry buffer for docker's stderr pipe — a pty
    *  merges stdout/stderr itself, but `docker logs -f` gives two pipes that
@@ -130,7 +133,7 @@ interface Runtime {
 
 export declare interface ProcessManager {
   on(event: "update", listener: (id: string) => void): this;
-  on(event: "log", listener: (id: string, lines: string[]) => void): this;
+  on(event: "log", listener: (id: string, lines: LogLine[]) => void): this;
   /** Deliberately not called "error": EventEmitter throws on an emitted
    *  "error" with no listener, which would turn a failed `docker start` into
    *  a dead daemon. */
@@ -189,7 +192,7 @@ export class ProcessManager extends EventEmitter {
     return this.runtimes.get(id)?.config ?? null;
   }
 
-  logBacklog(id: string): string[] {
+  logBacklog(id: string): LogLine[] {
     return this.runtimes.get(id)?.logs ?? [];
   }
 
@@ -197,9 +200,10 @@ export class ProcessManager extends EventEmitter {
   logNote(id: string, text: string) {
     const rt = this.runtimes.get(id);
     if (!rt) return;
-    rt.logs.push(text);
+    const line = { t: Date.now(), text };
+    rt.logs.push(line);
     if (rt.logs.length > LOG_BUFFER_LINES) rt.logs.splice(0, rt.logs.length - LOG_BUFFER_LINES);
-    this.emit("log", id, [text]);
+    this.emit("log", id, [line]);
   }
 
   /** A failed start/stop/restart, reported to the user rather than only to a
@@ -591,7 +595,7 @@ export class ProcessManager extends EventEmitter {
     if (rt.dockerLogProc) return;
     const id = rt.config.id;
     const tail = rt.logs.length === 0 ? "200" : "0";
-    const proc = spawn("docker", ["logs", "-f", "--tail", tail, container]);
+    const proc = spawn("docker", ["logs", "-f", "-t", "--tail", tail, container]);
     rt.dockerLogProc = proc;
     proc.stdout.on("data", (buf: Buffer) => this.ingestOutput(id, buf.toString(), "stdout"));
     proc.stderr.on("data", (buf: Buffer) => this.ingestOutput(id, buf.toString(), "stderr"));
@@ -713,8 +717,16 @@ export class ProcessManager extends EventEmitter {
 
     const bufKey = stream === "stdout" ? "lineBuffer" : "stderrBuffer";
     rt[bufKey] += chunk;
-    const parts = rt[bufKey].split(/\r?\n/);
-    rt[bufKey] = parts.pop() ?? "";
+    const raw = rt[bufKey].split(/\r?\n/);
+    rt[bufKey] = raw.pop() ?? "";
+    const now = Date.now();
+    const lines: LogLine[] = raw.map((line) => {
+      const ts = rt.config.kind === "docker" ? DOCKER_TS_RE.exec(line) : null;
+      const text = ts ? line.slice(ts[0].length) : line;
+      // A bare \r redraws the line in a terminal; keep only what it ended as.
+      return { t: ts ? Date.parse(ts[1]) : now, text: text.slice(text.lastIndexOf("\r") + 1) };
+    });
+    const parts = lines.map((line) => line.text);
 
     if (!rt.state.port && rt.config.port === undefined) {
       // Check completed lines first, then whatever's still buffered — a
@@ -727,8 +739,8 @@ export class ProcessManager extends EventEmitter {
       }
     }
 
-    if (parts.length === 0) return;
-    const collapsed = collapseBlankRuns(parts, rt.logs[rt.logs.length - 1]);
+    if (lines.length === 0) return;
+    const collapsed = collapseBlankRuns(lines, rt.logs[rt.logs.length - 1]);
     if (collapsed.length === 0) return;
     rt.logs.push(...collapsed);
     if (rt.logs.length > LOG_BUFFER_LINES) rt.logs.splice(0, rt.logs.length - LOG_BUFFER_LINES);
