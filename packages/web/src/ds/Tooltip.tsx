@@ -76,7 +76,9 @@ export function Tooltip({ label, children }: { label?: string; children: ReactNo
     };
   });
 
-  const trigger = show && isValidElement(children) ? cloneElement(children as ReactElement<{ "aria-describedby"?: string }>, { "aria-describedby": tipId }) : children;
+  // A tooltip that repeats the trigger's accessible name would be announced twice, so only describe with new text.
+  const named = isValidElement(children) && (children.props as { "aria-label"?: string })["aria-label"] === label;
+  const trigger = show && !named && isValidElement(children) ? cloneElement(children as ReactElement<{ "aria-describedby"?: string }>, { "aria-describedby": tipId }) : children;
 
   return (
     <span
